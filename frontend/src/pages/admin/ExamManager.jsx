@@ -6,7 +6,8 @@ import toast from 'react-hot-toast'
 import {
   Plus, Edit2, Trash2, BookOpen,
   Calendar, Clock, AlertTriangle,
-  List, Send, Layers, GripVertical, X, ChevronUp, ChevronDown, Filter
+  List, Send, Layers, GripVertical, X, ChevronUp, ChevronDown, Filter,
+  CheckCircle, RefreshCw
 } from 'lucide-react'
 
 const EMPTY_SUBJECT = {
@@ -15,6 +16,7 @@ const EMPTY_SUBJECT = {
 
 const EMPTY_FORM = {
   title: '', examType: 'single', subject: '', department: '', semester: '1', year: '1', section: '',
+  sections: [],
   description: '', instructions: '', duration: 60, totalMarks: 100,
   passMarks: 40, startTime: '', endTime: '', randomizeQuestions: false,
   randomizeOptions: false, showResultAfterExam: true, allowDownloadResult: true,
@@ -40,11 +42,14 @@ const normalizeSectionValue = (section) => String(section || '').trim().toUpperC
 const CONFLICT_STATUSES = new Set(['draft', 'scheduled', 'active'])
 
 const getExamConflict = (candidate, existingExams, excludeExamId = null) => {
-  const candidateSection = normalizeSectionValue(candidate.section)
   const candidateStart = new Date(candidate.startTime)
   const candidateEnd = new Date(candidate.endTime)
   if (!candidate.startTime || !candidate.endTime) return null
   if (isNaN(candidateStart.getTime()) || isNaN(candidateEnd.getTime())) return null
+
+  const candidateSections = Array.isArray(candidate.sections) && candidate.sections.length > 0
+    ? candidate.sections.map(s => String(s).trim().toUpperCase())
+    : (candidate.section ? [String(candidate.section).trim().toUpperCase()] : []);
 
   return existingExams.find(exam => {
     if (excludeExamId && String(exam._id) === String(excludeExamId)) return false
@@ -52,8 +57,14 @@ const getExamConflict = (candidate, existingExams, excludeExamId = null) => {
     if (String(exam.department?._id || exam.department) !== String(candidate.department)) return false
     if (String(exam.year) !== String(candidate.year)) return false
     if (String(exam.semester) !== String(candidate.semester)) return false
-    const examSection = normalizeSectionValue(exam.section)
-    const sectionsOverlap = (candidateSection === '' || examSection === '' || candidateSection === examSection)
+
+    const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
+      ? exam.sections.map(s => String(s).trim().toUpperCase())
+      : (exam.section ? [String(exam.section).trim().toUpperCase()] : []);
+
+    const sectionsOverlap = examSections.length === 0 || candidateSections.length === 0 ||
+      examSections.some(s => candidateSections.includes(s));
+
     if (!sectionsOverlap) return false
     const existingStart = new Date(exam.startTime)
     const existingEnd = new Date(exam.endTime)
@@ -229,6 +240,8 @@ export default function ExamManager() {
   const [form, setForm] = useState(EMPTY_FORM)
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(null)
+  const [publishReport, setPublishReport] = useState(null)
+  const [retryingEmails, setRetryingEmails] = useState(false)
 
   // Advanced Filters
   const [filterDept, setFilterDept] = useState('')
@@ -279,6 +292,7 @@ export default function ExamManager() {
       endTime: toLocalISOString(exam.endTime),
       subjects: exam.subjects || [],
       examType: exam.examType || 'single',
+      sections: exam.sections || (exam.section ? [exam.section] : []),
     })
     setShowModal(true)
   }
@@ -348,11 +362,33 @@ export default function ExamManager() {
 
   const handlePublish = async (id) => {
     try {
-      await api.patch(`/exam/${id}/publish`)
-      toast.success('Exam published!')
+      const res = await api.patch(`/exam/${id}/publish`)
+      toast.success('Exam published and emails sent!')
+      setPublishReport({
+        examId: id,
+        ...res.data.report
+      })
       loadData()
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to publish')
+    }
+  }
+
+  const handleRetryFailedEmails = async () => {
+    if (!publishReport || !publishReport.failedStudents || publishReport.failedStudents.length === 0) return
+    setRetryingEmails(true)
+    try {
+      const studentIds = publishReport.failedStudents.map(s => s._id)
+      const res = await api.post(`/exam/${publishReport.examId}/publish/retry`, { studentIds })
+      toast.success('Retry attempt completed!')
+      setPublishReport({
+        ...publishReport,
+        ...res.data.report
+      })
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to retry emails')
+    } finally {
+      setRetryingEmails(false)
     }
   }
 
@@ -581,14 +617,50 @@ export default function ExamManager() {
                   </select>
                 </div>
 
-                <div>
-                  <label className="input-label">Section <span className="text-slate-500 font-normal">(optional)</span></label>
-                  <select value={form.section} onChange={e => setForm(f => ({ ...f, section: e.target.value }))} className="input-field">
-                    <option value="">All Sections</option>
-                    <option value="A">Section A</option>
-                    <option value="B">Section B</option>
-                    <option value="C">Section C</option>
-                  </select>
+                <div className="sm:col-span-2">
+                  <label className="input-label mb-2">Eligible Sections</label>
+                  <div className="flex flex-wrap gap-4 p-3.5 bg-slate-800/40 rounded-xl border border-slate-700/50">
+                    <label className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-300">
+                      <input
+                        type="checkbox"
+                        checked={!form.sections || form.sections.length === 0}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setForm(f => ({ ...f, sections: [], section: '' }))
+                          }
+                        }}
+                        className="w-4 h-4 rounded border-slate-600 bg-slate-700 accent-blue-500 cursor-pointer"
+                      />
+                      All Sections
+                    </label>
+                    {['A', 'B', 'C', 'D', 'E', 'F'].map(sec => {
+                      const isChecked = form.sections && form.sections.includes(sec);
+                      return (
+                        <label key={sec} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-300">
+                          <input
+                            type="checkbox"
+                            checked={isChecked}
+                            onChange={(e) => {
+                              let newSections = [...(form.sections || [])];
+                              if (e.target.checked) {
+                                newSections.push(sec);
+                              } else {
+                                newSections = newSections.filter(s => s !== sec);
+                              }
+                              newSections.sort();
+                              setForm(f => ({
+                                ...f,
+                                sections: newSections,
+                                section: newSections.join(', ')
+                              }));
+                            }}
+                            className="w-4 h-4 rounded border-slate-600 bg-slate-700 accent-blue-500 cursor-pointer"
+                          />
+                          Section {sec}
+                        </label>
+                      );
+                    })}
+                  </div>
                 </div>
 
                 {form.examType === 'single' && (
@@ -672,6 +744,81 @@ export default function ExamManager() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* Email Report Modal */}
+      {publishReport && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glass-card w-full max-w-lg slide-up">
+            <div className="flex items-center justify-between p-6 border-b border-slate-700/50">
+              <h2 className="text-lg font-bold text-slate-100 font-['Outfit']">Exam Publication &amp; Notification Report</h2>
+              <button onClick={() => setPublishReport(null)} className="btn-icon text-slate-400 hover:text-slate-200">✕</button>
+            </div>
+            <div className="p-6 space-y-5">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-slate-800/40 p-3.5 rounded-xl border border-slate-700/50">
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Selected Sections</p>
+                  <p className="text-base font-extrabold text-blue-400 mt-1">{publishReport.selectedSections || 'All Sections'}</p>
+                </div>
+                <div className="bg-slate-800/40 p-3.5 rounded-xl border border-slate-700/50">
+                  <p className="text-[10px] text-slate-400 font-bold uppercase tracking-wider">Eligible Students</p>
+                  <p className="text-base font-extrabold text-slate-200 mt-1">{publishReport.eligibleCount}</p>
+                </div>
+                <div className="bg-emerald-500/5 p-3.5 rounded-xl border border-emerald-500/20">
+                  <p className="text-[10px] text-emerald-400 font-bold uppercase tracking-wider">Emails Sent</p>
+                  <p className="text-base font-extrabold text-emerald-400 mt-1">{publishReport.sentCount}</p>
+                </div>
+                <div className={`p-3.5 rounded-xl border ${publishReport.failedCount > 0 ? 'bg-red-500/5 border-red-500/20' : 'bg-slate-800/40 border-slate-700/50'}`}>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider ${publishReport.failedCount > 0 ? 'text-red-400' : 'text-slate-400'}`}>Emails Failed</p>
+                  <p className={`text-base font-extrabold mt-1 ${publishReport.failedCount > 0 ? 'text-red-400' : 'text-slate-200'}`}>{publishReport.failedCount}</p>
+                </div>
+              </div>
+
+              {publishReport.failedCount > 0 && (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-bold text-red-400 uppercase tracking-wider">Failed Students Details</p>
+                    <button
+                      onClick={handleRetryFailedEmails}
+                      disabled={retryingEmails}
+                      className="btn-primary btn-sm text-xs flex items-center gap-1.5"
+                    >
+                      <RefreshCw size={12} className={retryingEmails ? 'animate-spin' : ''} />
+                      {retryingEmails ? 'Retrying...' : 'Retry Failed Emails'}
+                    </button>
+                  </div>
+                  <div className="max-h-48 overflow-y-auto border border-slate-700/50 rounded-xl divide-y divide-slate-700/40 bg-slate-900/40">
+                    {publishReport.failedStudents.map(s => (
+                      <div key={s._id} className="p-3 text-xs flex items-start justify-between gap-3">
+                        <div>
+                          <p className="font-bold text-slate-200">{s.name} <code className="text-blue-400 text-[10px] font-semibold">({s.studentId})</code></p>
+                          <p className="text-slate-400 mt-0.5">{s.email} · Sec {s.section}</p>
+                        </div>
+                        <span className="text-[10px] font-semibold text-red-400 bg-red-500/10 px-2 py-0.5 rounded border border-red-500/20 max-w-[150px] truncate" title={s.reason}>
+                          {s.reason || 'Failed'}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {publishReport.failedCount === 0 && (
+                <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3 text-emerald-400">
+                  <CheckCircle size={20} className="flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-bold">All notifications sent successfully!</p>
+                    <p className="opacity-80 mt-0.5">Every eligible student has been notified via email.</p>
+                  </div>
+                </div>
+              )}
+
+              <div className="pt-2">
+                <button onClick={() => setPublishReport(null)} className="btn-secondary w-full">Close Report</button>
+              </div>
+            </div>
           </div>
         </div>
       )}

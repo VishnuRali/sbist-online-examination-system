@@ -60,24 +60,37 @@ const getExamById = async (req, res) => {
 const normalizeSectionValue = (value) => String(value || '').trim().toUpperCase();
 
 const validateExamOverlap = async (examData, excludeExamId = null) => {
-  const { department, year, semester, section, startTime, endTime } = examData;
+  const { department, year, semester, section, sections, startTime, endTime } = examData;
 
   const start = new Date(startTime);
   const end = new Date(endTime);
-  const targetSection = normalizeSectionValue(section);
+  
+  const normalizeSection = (value) => String(value || '').trim().toUpperCase();
+  const targetSections = Array.isArray(sections) && sections.length > 0
+    ? sections.map(s => normalizeSection(s))
+    : (section ? [normalizeSection(section)] : []);
 
   // 1. Duplicate check: Same department, year, semester, section, start time
   const dupQuery = {
     department,
     year,
     semester,
-    section: targetSection,
     startTime: start,
   };
   if (excludeExamId) dupQuery._id = { $ne: excludeExamId };
-  const duplicate = await Exam.findOne(dupQuery);
+  
+  const existingWithSameTime = await Exam.find(dupQuery);
+  const duplicate = existingWithSameTime.find(ex => {
+    const exSections = Array.isArray(ex.sections) && ex.sections.length > 0
+      ? ex.sections.map(s => normalizeSection(s))
+      : (ex.section ? [normalizeSection(ex.section)] : []);
+    
+    return exSections.length === 0 || targetSections.length === 0 ||
+      exSections.some(s => targetSections.includes(s));
+  });
+
   if (duplicate) {
-    throw new Error('An identical exam already exists with the same department, year, semester, section, and start time.');
+    throw new Error('An identical exam already exists with the same department, year, semester, sections, and start time.');
   }
 
   // 2. Overlap check
@@ -91,8 +104,13 @@ const validateExamOverlap = async (examData, excludeExamId = null) => {
 
   const existingExams = await Exam.find(query);
   const overlaps = existingExams.filter(ex => {
-    const existingSection = normalizeSectionValue(ex.section);
-    const sectionsOverlap = (targetSection === '' || existingSection === '' || targetSection === existingSection);
+    const exSections = Array.isArray(ex.sections) && ex.sections.length > 0
+      ? ex.sections.map(s => normalizeSection(s))
+      : (ex.section ? [normalizeSection(ex.section)] : []);
+
+    const sectionsOverlap = exSections.length === 0 || targetSections.length === 0 ||
+      exSections.some(s => targetSections.includes(s));
+    
     if (!sectionsOverlap) return false;
     const exStart = new Date(ex.startTime);
     const exEnd = new Date(ex.endTime);
@@ -206,7 +224,149 @@ const publishExam = async (req, res) => {
     exam.status = 'scheduled';
     exam.totalQuestions = questionCount;
     await exam.save();
-    res.json({ success: true, message: 'Exam published', exam });
+
+    // Trigger automatic section-wise email notifications
+    const report = await sendPublishNotifications(exam._id);
+
+    res.json({ success: true, message: 'Exam published and notifications sent', exam, report });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const sendPublishNotifications = async (examId, targetFailedStudentIds = null) => {
+  const EmailLog = require('../models/EmailLog');
+  const { getGmailConfig, createTransporter, getReminderEmailHTML, parseSmtpError } = require('../utils/emailService');
+
+  const exam = await Exam.findById(examId).populate('department subject');
+  if (!exam) throw new Error('Exam not found');
+
+  const normalizeSection = (value) => String(value || '')
+    .trim()
+    .toUpperCase();
+
+  const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
+    ? exam.sections.map(s => normalizeSection(s))
+    : (exam.section ? [normalizeSection(exam.section)] : []);
+
+  const studentQuery = {
+    department: exam.department?._id || exam.department,
+    year: String(exam.year),
+    semester: String(exam.semester),
+    isActive: true
+  };
+
+  // If specific sections are selected, limit to those sections
+  if (examSections.length > 0 && !examSections.includes('ALL') && !examSections.includes('')) {
+    studentQuery.section = { $in: examSections };
+  }
+
+  // If retrying, limit only to those failed student IDs
+  if (targetFailedStudentIds && Array.isArray(targetFailedStudentIds)) {
+    studentQuery._id = { $in: targetFailedStudentIds };
+  }
+
+  const eligibleStudents = await Student.find(studentQuery).populate('department');
+
+  // Load SMTP config
+  const { user, pass, portalUrl } = await getGmailConfig();
+  const isSmtpConfigured = !!(user && pass && !user.includes('your_gmail'));
+  
+  let sentCount = 0;
+  let failedCount = 0;
+  const failedStudentsList = [];
+
+  const transporter = isSmtpConfigured ? createTransporter(user, pass) : null;
+
+  for (const student of eligibleStudents) {
+    // Generate email HTML
+    const emailHtml = getReminderEmailHTML(student, exam, 'custom', portalUrl);
+    
+    // Create email log
+    const log = new EmailLog({
+      to: student.email,
+      studentName: student.name,
+      studentId: student.studentId,
+      studentRef: student._id,
+      emailType: 'custom',
+      subject: `📚 Exam Announcement: ${exam.title}`,
+      body: emailHtml,
+      status: 'pending',
+      department: student.department?._id || student.department,
+      year: student.year,
+      semester: student.semester,
+      section: student.section,
+      exam: exam._id
+    });
+    await log.save();
+
+    if (!isSmtpConfigured) {
+      log.status = 'failed';
+      log.errorMessage = 'SMTP credentials not configured';
+      await log.save();
+      failedCount++;
+      failedStudentsList.push({
+        _id: student._id.toString(),
+        name: student.name,
+        studentId: student.studentId,
+        email: student.email,
+        section: student.section || '—',
+        reason: 'SMTP credentials not configured'
+      });
+      continue;
+    }
+
+    try {
+      await transporter.sendMail({
+        from: `"SBIST Exam Portal" <${user}>`,
+        to: student.email,
+        subject: `📚 Exam Announcement: ${exam.title}`,
+        html: emailHtml
+      });
+
+      log.status = 'sent';
+      log.sentAt = new Date();
+      await log.save();
+      sentCount++;
+    } catch (err) {
+      const errorMsg = parseSmtpError(err);
+      log.status = 'failed';
+      log.errorMessage = errorMsg;
+      await log.save();
+      failedCount++;
+      failedStudentsList.push({
+        _id: student._id.toString(),
+        name: student.name,
+        studentId: student.studentId,
+        email: student.email,
+        section: student.section || '—',
+        reason: errorMsg
+      });
+    }
+
+    // Add tiny delay to protect Gmail limits
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }
+
+  return {
+    selectedSections: examSections.length > 0 ? examSections.join(', ') : 'All Sections',
+    eligibleCount: eligibleStudents.length,
+    sentCount,
+    failedCount,
+    failedStudents: failedStudentsList
+  };
+};
+
+const retryPublishNotifications = async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+    const { id } = req.params; // examId
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'studentIds array is required' });
+    }
+
+    const report = await sendPublishNotifications(id, studentIds);
+    res.json({ success: true, report });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -990,7 +1150,7 @@ const exportResultsPDF = async (req, res) => {
 };
 
 module.exports = {
-  getExams, getExamById, createExam, updateExam, deleteExam, publishExam,
+  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
   getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
   getQuestions, addQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions,
   downloadQuestionTemplate, forceSubmitStudent, getExamResults,

@@ -101,9 +101,15 @@ const getAvailableExams = async (req, res) => {
       if (examYear !== student.year) reasons.push('Year mismatch');
       if (examSemester !== student.semester) reasons.push('Semester mismatch');
 
+      const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
+        ? exam.sections.map(s => normalizeSection(s))
+        : (exam.section ? [normalizeSection(exam.section)] : []);
+
       const sectionMatches =
-        examSection === '' ||
-        (student.section !== '' && examSection === student.section);
+        examSections.length === 0 ||
+        examSections.includes('ALL') ||
+        examSections.includes('') ||
+        (student.section !== '' && examSections.includes(student.section));
       if (!sectionMatches) reasons.push(`Section mismatch`);
 
       const statusMatches = ['scheduled', 'active'].includes(examStatus);
