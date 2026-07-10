@@ -1,0 +1,10 @@
+{
+  "name": "sbist-exam-system-root",
+  "version": "2.0.0",
+  "description": "Root configuration to run backend and frontend concurrently",
+  "scripts": {
+    "backend": "npm run dev --prefix backend",
+    "frontend": "npm run dev --prefix frontend",
+    "dev": "npx concurrently \"npm run backend\" \"npm run frontend\""
+  }
+}

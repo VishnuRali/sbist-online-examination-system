@@ -1,0 +1,598 @@
+const nodemailer = require('nodemailer');
+const EmailLog = require('../models/EmailLog');
+const Settings = require('../models/Settings');
+
+// Helper to load Gmail credentials from DB or Env
+const getGmailConfig = async () => {
+  const settings = await Settings.findOne();
+  const user = settings?.gmailUser || process.env.GMAIL_USER;
+  const pass = settings?.gmailAppPassword || process.env.GMAIL_APP_PASSWORD;
+  const portalUrl = settings?.examPortalUrl || process.env.EXAM_URL || 'http://localhost:5173';
+  return { user, pass, portalUrl };
+};
+
+// Create transporter
+const createTransporter = (user, pass) => {
+  const isDev = process.env.NODE_ENV === 'development';
+  const mailOptions = {
+    host: 'smtp.gmail.com',
+    port: 465,
+    secure: true,
+    auth: { user, pass },
+    tls: {
+      // Allow self-signed certs in development (e.g. antivirus/local proxy intercepting TLS)
+      rejectUnauthorized: !isDev
+    }
+  };
+
+  // Add verbose debugging logs in development console
+  if (isDev) {
+    mailOptions.debug = true;
+    mailOptions.logger = true;
+  }
+
+  return nodemailer.createTransport(mailOptions);
+};
+
+const isEmailConfigured = async () => {
+  const { user, pass } = await getGmailConfig();
+  return !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char'));
+};
+
+// ==================== EMAIL TEMPLATES ====================
+
+/**
+ * Welcome email sent when student account is created.
+ * Contains: Student Name, Student ID, Password, Department, Year, Semester, Section, Portal URL
+ */
+const getWelcomeEmailHTML = (student, portalUrl) => {
+  const deptName = typeof student.department === 'object'
+    ? (student.department?.name || 'N/A')
+    : (student.department || 'N/A');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<style>
+  body { font-family: Arial, sans-serif; background: #f4f4f4; margin: 0; padding: 20px; }
+  .container { max-width: 600px; margin: 0 auto; background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.1); }
+  .header { background: linear-gradient(135deg, #1e3a8a, #4f46e5); color: white; padding: 32px 24px; text-align: center; }
+  .header h1 { margin: 0; font-size: 22px; letter-spacing: 0.5px; }
+  .header p { margin: 8px 0 0; opacity: 0.85; font-size: 14px; }
+  .body { padding: 32px 24px; }
+  .greeting { font-size: 17px; color: #1e293b; margin-bottom: 20px; }
+  .credential-box { background: #0f172a; border-radius: 10px; padding: 20px; margin: 20px 0; }
+  .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding-bottom: 10px; border-bottom: 1px solid #1e293b; }
+  .credential-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .cred-label { color: #94a3b8; font-size: 13px; }
+  .cred-value { color: #60a5fa; font-size: 15px; font-weight: 700; font-family: monospace; letter-spacing: 1px; }
+  .info-box { background: #f0f7ff; border: 1px solid #bfdbfe; border-radius: 10px; padding: 20px; margin: 20px 0; }
+  .info-row { display: flex; justify-content: space-between; margin: 8px 0; padding-bottom: 8px; border-bottom: 1px solid #dbeafe; }
+  .info-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
+  .info-label { color: #64748b; font-size: 13px; font-weight: 600; }
+  .info-value { color: #1e293b; font-size: 13px; font-weight: 700; text-align: right; max-width: 60%; }
+  .link-btn { display: block; background: linear-gradient(135deg, #2563eb, #4f46e5); color: white; text-decoration: none; text-align: center; padding: 14px 24px; border-radius: 8px; margin: 20px 0; font-weight: bold; font-size: 15px; }
+  .warning { background: #fff7ed; border: 1px solid #fed7aa; border-radius: 8px; padding: 14px; margin: 16px 0; font-size: 13px; color: #92400e; }
+  .footer { background: #f8fafc; padding: 20px 24px; text-align: center; color: #64748b; font-size: 12px; border-top: 1px solid #e2e8f0; }
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="header">
+    <h1>🎓 SWARNA BHARATHI INSTITUTE</h1>
+    <p>OF SCIENCE AND TECHNOLOGY</p>
+    <p style="margin-top:14px; font-size:16px; font-weight:bold;">SBIST Online Examination System</p>
+  </div>
+  <div class="body">
+    <p class="greeting">Dear <strong>${student.name}</strong>,</p>
+    <p style="color:#475569;">Your examination portal account has been created successfully. Please find your login credentials below.</p>
+
+    <div class="credential-box">
+      <p style="color:#94a3b8; font-size:12px; margin:0 0 12px; text-transform:uppercase; letter-spacing:1px;">🔐 Login Credentials</p>
+      <div class="credential-row">
+        <span class="cred-label">Student ID</span>
+        <span class="cred-value">${student.studentId}</span>
+      </div>
+      <div class="credential-row">
+        <span class="cred-label">Password</span>
+        <span class="cred-value">${student.password}</span>
+      </div>
+    </div>
+
+    <div class="info-box">
+      <p style="color:#1e40af; font-size:12px; margin:0 0 12px; text-transform:uppercase; letter-spacing:1px; font-weight:700;">📋 Your Academic Details</p>
+      <div class="info-row">
+        <span class="info-label">Full Name</span>
+        <span class="info-value">${student.name}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Department</span>
+        <span class="info-value">${deptName}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Year</span>
+        <span class="info-value">Year ${student.year}</span>
+      </div>
+      <div class="info-row">
+        <span class="info-label">Semester</span>
+        <span class="info-value">Semester ${student.semester}</span>
+      </div>
+      ${student.section ? `
+      <div class="info-row">
+        <span class="info-label">Section</span>
+        <span class="info-value">Section ${student.section}</span>
+      </div>` : ''}
+      ${student.academicYear ? `
+      <div class="info-row">
+        <span class="info-label">Academic Year</span>
+        <span class="info-value">${student.academicYear}</span>
+      </div>` : ''}
+      ${student.rollNumber ? `
+      <div class="info-row">
+        <span class="info-label">Roll Number</span>
+        <span class="info-value">${student.rollNumber}</span>
+      </div>` : ''}
+    </div>
+
+    <a href="${portalUrl}" class="link-btn">
+      🔗 Login to Exam Portal
+    </a>
+
+    <div class="warning">
+      ⚠️ <strong>Important:</strong> Keep your Student ID and password confidential. Do not share them with anyone. Ensure you have a stable internet connection before starting any exam. Tab switching during the exam may result in automatic submission.
+    </div>
+  </div>
+  <div class="footer">
+    <p><strong>SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY</strong></p>
+    <p>This is an automated message. Please do not reply to this email.</p>
+    <p>Portal: ${portalUrl}</p>
+  </div>
+</div>
+</body>
+</html>
+  `;
+};
+
+/**
+ * Reminder email sent before exam.
+ * Includes: Exam Name, Subject, Department, Year, Semester, Section,
+ *           Date, Start Time, Duration, Total Marks, Pass Marks, Instructions.
+ */
+const getReminderEmailHTML = (student, exam, type, portalUrl) => {
+  const typeLabels = {
+    reminder_24h: '24 Hours',
+    reminder_1h:  '1 Hour',
+    reminder_30m: '30 Minutes',
+    custom:       'Soon',
+  };
+  const label     = typeLabels[type] || '30 Minutes';
+  const urgency   = type === 'reminder_30m' ? '🔴' : type === 'reminder_1h' ? '🟡' : '🟢';
+  const alertColor = type === 'reminder_30m' ? '#dc2626' : type === 'reminder_1h' ? '#d97706' : '#059669';
+
+  const startDate = new Date(exam.startTime);
+  const examDate  = startDate.toLocaleDateString('en-IN', {
+    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
+  });
+  const examTime = startDate.toLocaleTimeString('en-IN', {
+    hour: '2-digit', minute: '2-digit', hour12: true,
+  });
+
+  let subjectName = '';
+  if (exam.examType === 'multi' && exam.subjects && exam.subjects.length > 0) {
+    subjectName = exam.subjects.map(s => s.subjectName).join(', ');
+  } else {
+    subjectName = typeof exam.subject === 'object' ? (exam.subject?.name || 'N/A') : (exam.subject || 'N/A');
+  }
+  const deptName     = typeof exam.department === 'object' ? (exam.department?.name || 'N/A') : (exam.department || 'N/A');
+  const sectionLabel = student.section && student.section !== '' ? `Section ${student.section}` : (exam.section && exam.section !== '' ? `Section ${exam.section}` : 'All Sections');
+  const instructions = (exam.instructions || '').trim();
+
+  // Info rows helper
+  const infoRow = (label, value) => `
+    <tr>
+      <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;width:38%;border-bottom:1px solid #e2e8f0;">${label}</td>
+      <td style="padding:8px 12px;color:#1e293b;font-size:13px;font-weight:700;border-bottom:1px solid #e2e8f0;">${value}</td>
+    </tr>`;
+
+  return `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+</head>
+<body style="font-family:Arial,sans-serif;background:#f4f4f4;margin:0;padding:20px;">
+<div style="max-width:600px;margin:0 auto;background:white;border-radius:12px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.1);">
+
+  <!-- Header -->
+  <div style="background:linear-gradient(135deg,#1e3a8a,#4f46e5);color:white;padding:28px 24px;text-align:center;">
+    <p style="margin:0;font-size:12px;letter-spacing:2px;opacity:0.8;text-transform:uppercase;">Swarna Bharathi Institute of Science and Technology</p>
+    <h1 style="margin:8px 0 0;font-size:20px;font-weight:800;">SBIST Online Examination</h1>
+  </div>
+
+  <!-- Alert Banner -->
+  <div style="background:${alertColor};color:white;text-align:center;padding:14px;font-weight:bold;font-size:17px;letter-spacing:0.5px;">
+    ${urgency} EXAM REMINDER — Starts in ${label}
+  </div>
+
+  <!-- Body -->
+  <div style="padding:28px 24px;">
+    <p style="font-size:16px;color:#1e293b;margin:0 0 6px;">Dear <strong>${student.name}</strong>,</p>
+    <p style="color:#475569;font-size:14px;margin:0 0 20px;">
+      Your upcoming examination begins in <strong>${label}</strong>. Please review the details below and log in on time.
+    </p>
+
+    <!-- Countdown box -->
+    <div style="background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:14px;text-align:center;margin-bottom:20px;">
+      <p style="margin:0;font-size:15px;font-weight:700;color:#92400e;">
+        ⏰ Your examination begins in ${label}. Log in now and be prepared.
+      </p>
+    </div>
+
+    <!-- Exam Details Table -->
+    <p style="color:#1e40af;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px;">📝 Exam Details</p>
+    <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:20px;">
+      <tbody>
+        ${infoRow('Exam Title',     exam.title)}
+        ${infoRow('Subject',        subjectName)}
+        ${infoRow('Department',     deptName)}
+        ${infoRow('Year / Semester', `Year ${exam.year} &nbsp;|&nbsp; Semester ${exam.semester}`)}
+        ${infoRow('Section',        sectionLabel)}
+        ${infoRow('Date',           examDate)}
+        ${infoRow('Start Time',     examTime)}
+        ${infoRow('Duration',       `${exam.duration} Minutes`)}
+        ${infoRow('Total Marks',    String(exam.totalMarks || '—'))}
+        ${infoRow('Pass Marks',     String(exam.passMarks  || '—'))}
+        ${infoRow('Your Student ID', student.studentId)}
+      </tbody>
+    </table>
+
+    ${instructions ? `
+    <!-- Instructions -->
+    <p style="color:#1e40af;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px;">📋 Exam Instructions</p>
+    <div style="background:#f0f7ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px;margin-bottom:20px;font-size:13px;color:#1e293b;white-space:pre-wrap;">${instructions}</div>
+    ` : ''}
+
+    <!-- CTA Button -->
+    <a href="${portalUrl}" style="display:block;background:linear-gradient(135deg,#2563eb,#4f46e5);color:white;text-decoration:none;text-align:center;padding:14px 24px;border-radius:8px;margin:0 0 16px;font-weight:bold;font-size:15px;">
+      🔗 Login &amp; Start Exam Now
+    </a>
+
+    <!-- Warning -->
+    <div style="background:#fff7ed;border:1px solid #fed7aa;border-radius:8px;padding:12px;font-size:12px;color:#92400e;">
+      ⚠️ <strong>Important:</strong> Ensure a stable internet connection before starting. Tab switching, exiting fullscreen, or using keyboard shortcuts during the exam may result in automatic submission.
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div style="background:#f8fafc;padding:16px 24px;text-align:center;color:#64748b;font-size:11px;border-top:1px solid #e2e8f0;">
+    <p style="margin:0 0 4px;"><strong>SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY</strong></p>
+    <p style="margin:0;">This is an automated reminder. Do not reply to this email. &nbsp;|&nbsp; Portal: ${portalUrl}</p>
+  </div>
+
+</div>
+</body>
+</html>`;
+};
+
+
+
+// ==================== SMTP ERROR PARSER & RETRY SYSTEM ====================
+
+const parseSmtpError = (error) => {
+  const msg = error?.message || String(error);
+  if (msg.includes('454') || msg.toLowerCase().includes('too many login attempts')) {
+    return 'Gmail rate limit: Too many login attempts. Auto-retry scheduled.';
+  }
+  if (msg.includes('Username and Password not accepted') || msg.toLowerCase().includes('authentication') || msg.toLowerCase().includes('invalid credentials')) {
+    return 'Authentication failed: Invalid Gmail credentials. Update in Settings.';
+  }
+  if (error?.code === 'ETIMEDOUT' || error?.code === 'TIMEOUT' || msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('time out')) {
+    return 'Connection timeout: Mail server is slow or offline. Auto-retry scheduled.';
+  }
+  if (error?.code === 'ENOTFOUND' || error?.code === 'ECONNREFUSED' || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('dns')) {
+    return 'Network error: Connection refused or host unreachable. Auto-retry scheduled.';
+  }
+  if (msg.toLowerCase().includes('limit exceeded') || msg.toLowerCase().includes('exceeded')) {
+    return 'Daily limit exceeded: SMTP sending quota reached. Auto-retry scheduled.';
+  }
+  return msg;
+};
+
+// ==================== SEND FUNCTIONS ====================
+
+const sendWelcomeEmail = async (student, exam = null) => {
+  const { user, pass, portalUrl } = await getGmailConfig();
+
+  const log = new EmailLog({
+    to: student.email,
+    studentName: student.name,
+    studentId: student.studentId,
+    type: 'welcome',
+    subject: 'SBIST Online Examination — Your Account Details',
+    exam: exam ? exam._id : null,
+    student: student._id,
+    attemptedAt: new Date(),
+    attempts: 1,
+    department: student.department?._id || student.department || null,
+    year: student.year || '',
+    semester: student.semester || '',
+    section: student.section || '',
+  });
+
+  if (!user || !pass) {
+    console.log(`[Email] SMTP not configured. Skipping welcome email to ${student.email}`);
+    log.status = 'failed';
+    log.errorMessage = 'SMTP credentials not configured in settings/env';
+    await log.save();
+    return { success: false, reason: 'SMTP credentials not configured' };
+  }
+
+  try {
+    const transporter = createTransporter(user, pass);
+    await transporter.sendMail({
+      from: `"SBIST Examinations" <${user}>`,
+      to: student.email,
+      subject: 'SBIST Online Examination — Your Account Details & Login Credentials',
+      html: getWelcomeEmailHTML(student, portalUrl),
+    });
+
+    log.status = 'sent';
+    log.sentAt = new Date();
+    log.errorMessage = '';
+    await log.save();
+    console.log(`[Email] Welcome email sent to ${student.email}`);
+    return { success: true };
+  } catch (error) {
+    log.status = 'failed';
+    log.errorMessage = parseSmtpError(error);
+    log.nextAttemptAt = new Date(Date.now() + 60000); // retry after 1 min (first backoff)
+    await log.save();
+    console.error(`[Email] Failed to send to ${student.email}: ${error.message}`);
+    return { success: false, error: log.errorMessage };
+  }
+};
+
+const sendReminderEmail = async (student, exam, type) => {
+  const { user, pass, portalUrl } = await getGmailConfig();
+  const typeLabel = {
+    reminder_24h: '24 Hours',
+    reminder_1h:  '1 Hour',
+    reminder_30m: '30 Minutes',
+  }[type] || '30 Minutes';
+  
+  const log = new EmailLog({
+    to: student.email,
+    studentName: student.name,
+    studentId: student.studentId,
+    type,
+    subject: `SBIST Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
+    exam: exam._id,
+    student: student._id,
+    attemptedAt: new Date(),
+    attempts: 1,
+    department: student.department?._id || student.department || null,
+    year: student.year || '',
+    semester: student.semester || '',
+    section: student.section || '',
+  });
+
+  if (!user || !pass) {
+    log.status = 'failed';
+    log.errorMessage = 'SMTP credentials not configured in settings/env';
+    await log.save();
+    return { success: false };
+  }
+
+  try {
+    const transporter = createTransporter(user, pass);
+    await transporter.sendMail({
+      from: `"SBIST Examinations" <${user}>`,
+      to: student.email,
+      subject: `SBIST Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
+      html: getReminderEmailHTML(student, exam, type, portalUrl),
+    });
+
+    log.status = 'sent';
+    log.sentAt = new Date();
+    log.errorMessage = '';
+    await log.save();
+    return { success: true };
+  } catch (error) {
+    log.status = 'failed';
+    log.errorMessage = parseSmtpError(error);
+    log.nextAttemptAt = new Date(Date.now() + 60000); // retry after 1 min (first backoff)
+    await log.save();
+    return { success: false, error: error.message };
+  }
+};
+
+const retryEmailLog = async (log) => {
+  const Student = require('../models/Student');
+  const Exam = require('../models/Exam');
+  const { user, pass, portalUrl } = await getGmailConfig();
+
+  if (!user || !pass) {
+    log.status = 'failed';
+    log.errorMessage = 'SMTP credentials not configured in settings/env';
+    await log.save();
+    return { success: false, error: log.errorMessage };
+  }
+
+  const student = await Student.findById(log.student).populate('department');
+  const exam = log.exam ? await Exam.findById(log.exam).populate('subject department') : null;
+
+  if (!student) {
+    log.status = 'failed';
+    log.errorMessage = 'Student not found in database';
+    await log.save();
+    return { success: false, error: 'Student not found' };
+  }
+
+  log.attempts += 1;
+  log.retried = true;
+  log.attemptedAt = new Date();
+
+  try {
+    let html = '';
+    if (log.type === 'welcome') {
+      html = getWelcomeEmailHTML(student, portalUrl);
+    } else {
+      if (!exam) {
+        log.status = 'failed';
+        log.errorMessage = 'Exam not found in database';
+        await log.save();
+        return { success: false, error: 'Exam not found' };
+      }
+      html = getReminderEmailHTML(student, exam, log.type, portalUrl);
+    }
+
+    const transporter = createTransporter(user, pass);
+    await transporter.sendMail({
+      from: `"SBIST Examinations" <${user}>`,
+      to: log.to,
+      subject: log.subject,
+      html,
+    });
+
+    log.status = 'sent';
+    log.sentAt = new Date();
+    log.errorMessage = '';
+    log.nextAttemptAt = null;
+    await log.save();
+    return { success: true };
+  } catch (error) {
+    log.status = 'failed';
+    log.errorMessage = parseSmtpError(error);
+    
+    if (log.attempts < 4) {
+      const backoffMinutes = [0, 1, 5, 15][log.attempts] || 15;
+      log.nextAttemptAt = new Date(Date.now() + backoffMinutes * 60000);
+    } else {
+      log.nextAttemptAt = null;
+    }
+    await log.save();
+    return { success: false, error: log.errorMessage };
+  }
+};
+
+const retryAllFailedLogs = async () => {
+  const failedLogs = await EmailLog.find({ status: 'failed' });
+  let successCount = 0;
+  let failCount = 0;
+
+  for (const log of failedLogs) {
+    try {
+      const res = await retryEmailLog(log);
+      if (res.success) successCount++;
+      else failCount++;
+    } catch {
+      failCount++;
+    }
+  }
+  return { successCount, failCount, total: failedLogs.length };
+};
+
+/**
+ * Verify SMTP connection by sending a test email
+ */
+const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => {
+  try {
+    const transporter = createTransporter(testUser, testPass);
+    // Verify SMTP connection config
+    await transporter.verify();
+
+    if (recipientEmail) {
+      const portalConfig = await getGmailConfig();
+      const info = await transporter.sendMail({
+        from: `"SBIST SMTP Test" <${testUser}>`,
+        to: recipientEmail,
+        subject: 'SBIST Exam Portal — SMTP Integration Test',
+        text: 'This is a verification email from your SBIST Exam Portal. If you received this, your SMTP email connection is fully working!',
+        html: `
+          <div style="font-family: sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 500px; margin: auto; background-color: #ffffff;">
+            <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">🎉 SMTP Connection Successful!</h2>
+            <p style="color: #334155; font-size: 14px; line-height: 1.5;">This is an automated verification email from the <strong>SBIST Online Examination Portal</strong>.</p>
+            <p style="color: #475569; font-size: 13px; line-height: 1.5; background-color: #f8fafc; padding: 12px; border-radius: 8px;">
+              Your SMTP credentials have been successfully authenticated. The system is now ready to send automated welcome messages and examination reminders.
+            </p>
+            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+            <p style="color: #94a3b8; font-size: 11px; margin: 0;">Sent to: ${recipientEmail}</p>
+            <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0;">Portal URL: ${portalConfig.portalUrl}</p>
+            <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0;">Timestamp: ${new Date().toLocaleString('en-IN')}</p>
+          </div>
+        `
+      });
+
+      return { 
+        success: true, 
+        messageId: info.messageId, 
+        response: info.response,
+        envelope: info.envelope
+      };
+    }
+
+    return { success: true };
+  } catch (error) {
+    console.error('[SMTP] Connection verify failed:', error);
+    
+    let selfSignedIssue = false;
+    if (error.message && error.message.includes('self-signed certificate')) {
+      selfSignedIssue = true;
+    }
+
+    return { 
+      success: false, 
+      reason: error.message, 
+      code: error.code,
+      command: error.command,
+      selfSignedIssue,
+      stack: error.stack 
+    };
+  }
+};
+
+const sendOtpEmail = async (email, name, otp) => {
+  const { user, pass } = await getGmailConfig();
+  if (!user || !pass) {
+    return { success: false, reason: 'SMTP credentials not configured' };
+  }
+  try {
+    const transporter = createTransporter(user, pass);
+    await transporter.sendMail({
+      from: `"SBIST Examinations" <${user}>`,
+      to: email,
+      subject: 'SBIST Portal — Forgot Password OTP',
+      html: `
+        <div style="font-family: sans-serif; padding: 24px; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
+          <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">Forgot Password OTP</h2>
+          <p style="color: #334155; font-size: 14px;">Dear ${name},</p>
+          <p style="color: #334155; font-size: 14px;">You requested a password reset for your SBIST Exam Portal account.</p>
+          <div style="background-color: #f8fafc; text-align: center; padding: 16px; border-radius: 8px; margin: 20px 0;">
+            <span style="font-size: 28px; font-weight: bold; color: #1e3a8a; letter-spacing: 4px;">${otp}</span>
+          </div>
+          <p style="color: #475569; font-size: 13px;">This OTP is valid for <strong>10 minutes</strong>. Do not share this OTP with anyone.</p>
+          <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
+          <p style="color: #94a3b8; font-size: 11px; margin: 0;">If you did not request this, please ignore this email.</p>
+        </div>
+      `
+    });
+    return { success: true };
+  } catch (error) {
+    console.error('Failed to send OTP email:', error);
+    return { success: false, error: error.message };
+  }
+};
+
+module.exports = { 
+  sendWelcomeEmail, 
+  sendReminderEmail, 
+  isEmailConfigured,
+  testSmtpConnection,
+  getGmailConfig,
+  sendOtpEmail,
+  retryEmailLog,
+  retryAllFailedLogs
+};

@@ -1,0 +1,56 @@
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+
+const studentSchema = new mongoose.Schema({
+  studentId: { type: String, required: true, unique: true, trim: true },
+  password: { type: String, required: true },
+  name: { type: String, required: true, trim: true },
+  rollNumber: { type: String, default: '', trim: true },
+  department: { type: mongoose.Schema.Types.ObjectId, ref: 'Department', required: true },
+  branch: { type: String, default: '', trim: true },
+  year: { type: String, required: true, enum: ['1', '2', '3', '4'] },
+  semester: { type: String, required: true },
+  section: { type: String, default: '', uppercase: true, trim: true },
+  academicYear: { type: String, default: '', trim: true },
+  email: { type: String, required: true, unique: true, lowercase: true, trim: true },
+  mobile: { type: String, default: '', trim: true },
+  role: { type: String, default: 'student' },
+  isActive: { type: Boolean, default: true },
+  isLoggedIn: { type: Boolean, default: false },
+  currentExam: { type: mongoose.Schema.Types.ObjectId, ref: 'Exam', default: null },
+  lastLogin: { type: Date },
+  profilePic: { type: String, default: '' },
+  // Google Form integration
+  googleFormResponseId: { type: String, default: '', trim: true },
+  // Email tracking
+  welcomeEmailSent: { type: Boolean, default: false },
+  welcomeEmailSentAt: { type: Date },
+  // Security and password management fields
+  loginAttempts: { type: Number, default: 0 },
+  lockUntil: { type: Date },
+  isPasswordChanged: { type: Boolean, default: false },
+  resetPasswordOtp: { type: String },
+  resetPasswordOtpExpires: { type: Date },
+  // Session management — stores the active session ID embedded in the JWT
+  // When a student logs in on a new device, this is overwritten, invalidating the old session
+  currentSessionId: { type: String, default: null },
+}, { timestamps: true });
+
+
+studentSchema.pre('save', async function (next) {
+  if (!this.isModified('password')) return next();
+  this.password = await bcrypt.hash(this.password, 12);
+  next();
+});
+
+studentSchema.methods.comparePassword = async function (candidatePassword) {
+  return bcrypt.compare(candidatePassword, this.password);
+};
+
+studentSchema.methods.toJSON = function () {
+  const obj = this.toObject();
+  delete obj.password;
+  return obj;
+};
+
+module.exports = mongoose.model('Student', studentSchema);
