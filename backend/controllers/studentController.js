@@ -2,7 +2,8 @@ const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Result = require('../models/Result');
 const Student = require('../models/Student');
-const { shuffleArray, calculateGrade } = require('../utils/generateId');
+const { shuffleArray } = require('../utils/generateId');
+const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: resolve a student's displayed answer key back to the original key
@@ -565,85 +566,20 @@ const submitExam = async (req, res) => {
 const submitExamLogic = async (result, exam, res, submitStatus) => {
   try {
     const questions = await Question.find({ exam: result.exam });
-    const savedAnswers = result.savedProgress?.answers;
-    const optionMappings = result.savedProgress?.optionMappings;
-
-    let obtainedMarks = 0, correct = 0, wrong = 0, skipped = 0;
-    const subjectStats = {}; // { subjectIndex: { obtained, total, correct, wrong, skipped } }
-
-    questions.forEach(q => {
-      const si = q.subjectIndex || 0;
-      if (!subjectStats[si]) subjectStats[si] = { obtained: 0, total: 0, correct: 0, wrong: 0, skipped: 0 };
-      subjectStats[si].total += q.marks;
-
-      // Get the display key that the student selected
-      const displayAnswer = getSavedAnswer(savedAnswers, q._id);
-      // Resolve to original answer key using the stored mapping
-      const originalAnswer = resolveOriginalAnswer(q._id, displayAnswer, optionMappings);
-
-      if (!originalAnswer) {
-        skipped++;
-        subjectStats[si].skipped++;
-      } else if (originalAnswer === q.correctAnswer.trim().toUpperCase()) {
-        obtainedMarks += q.marks;
-        correct++;
-        subjectStats[si].obtained += q.marks;
-        subjectStats[si].correct++;
-      } else {
-        wrong++;
-        subjectStats[si].wrong++;
-        // Negative marking: check per-subject setting for multi-subject, or exam-level for single
-        const useNegative = exam?.examType === 'multi'
-          ? (exam.subjects[si]?.negativeMarking === true)
-          : (exam?.negativeMarking === true);
-        if (useNegative && q.negativeMark > 0) {
-          obtainedMarks -= q.negativeMark;
-          subjectStats[si].obtained -= q.negativeMark;
-        }
-      }
-    });
-
-    obtainedMarks = Math.max(0, obtainedMarks);
-    const totalMarks = questions.reduce((sum, q) => sum + q.marks, 0);
-    const percentage = totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
-
-    // Build per-subject results for multi-subject exams
-    const subjectResults = [];
-    if (exam?.examType === 'multi' && exam.subjects.length > 0) {
-      exam.subjects.forEach((subj, i) => {
-        const stats = subjectStats[i] || { obtained: 0, total: subj.totalMarks, correct: 0, wrong: 0, skipped: 0 };
-        const subjObtained = Math.max(0, stats.obtained);
-        subjectResults.push({
-          subjectName: subj.subjectName,
-          subjectIndex: i,
-          obtainedMarks: subjObtained,
-          totalMarks: subj.totalMarks,
-          passMarks: subj.passMarks,
-          isPassed: subjObtained >= subj.passMarks,
-          correctAnswers: stats.correct,
-          wrongAnswers: stats.wrong,
-          skippedAnswers: stats.skipped,
-          percentage: subj.totalMarks > 0 ? (subjObtained / subj.totalMarks) * 100 : 0,
-        });
-      });
-    }
-
-    const effectivePassMarks = exam?.examType === 'multi' && exam.subjects.length > 0
-      ? exam.subjects.reduce((sum, s) => sum + s.passMarks, 0)
-      : (exam?.passMarks || 0);
+    const evaluation = evaluateExamResult(questions, result.savedProgress?.answers, result.savedProgress?.optionMappings, exam);
 
     result.status = submitStatus;
     result.submittedAt = new Date();
-    result.obtainedMarks = obtainedMarks;
-    result.totalMarks = totalMarks;
-    result.correctAnswers = correct;
-    result.wrongAnswers = wrong;
-    result.skippedAnswers = skipped;
-    result.percentage = percentage;
-    result.isPassed = obtainedMarks >= effectivePassMarks;
-    result.grade = calculateGrade(percentage);
+    result.obtainedMarks = evaluation.obtainedMarks;
+    result.totalMarks = evaluation.totalMarks;
+    result.correctAnswers = evaluation.correctAnswers;
+    result.wrongAnswers = evaluation.wrongAnswers;
+    result.skippedAnswers = evaluation.skippedAnswers;
+    result.percentage = evaluation.percentage;
+    result.isPassed = evaluation.isPassed;
+    result.grade = evaluation.grade;
     result.timeSpent = Math.floor((result.submittedAt - result.startedAt) / 1000);
-    result.subjectResults = subjectResults;
+    result.subjectResults = evaluation.subjectResults;
     await result.save();
 
     // Clear the student's current exam reference
@@ -654,16 +590,16 @@ const submitExamLogic = async (result, exam, res, submitStatus) => {
       message: 'Exam submitted successfully',
       result: {
         _id: result._id,
-        obtainedMarks,
-        totalMarks,
-        percentage: percentage.toFixed(2),
+        obtainedMarks: evaluation.obtainedMarks,
+        totalMarks: evaluation.totalMarks,
+        percentage: evaluation.percentage.toFixed(2),
         grade: result.grade,
         isPassed: result.isPassed,
-        correctAnswers: correct,
-        wrongAnswers: wrong,
-        skippedAnswers: skipped,
+        correctAnswers: evaluation.correctAnswers,
+        wrongAnswers: evaluation.wrongAnswers,
+        skippedAnswers: evaluation.skippedAnswers,
         status: submitStatus,
-        subjectResults,
+        subjectResults: evaluation.subjectResults,
       },
       showResult: exam?.showResultAfterExam,
     });

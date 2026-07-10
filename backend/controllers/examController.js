@@ -4,7 +4,8 @@ const Result = require('../models/Result');
 const Student = require('../models/Student');
 const multer = require('multer');
 const { parseQuestionsFromExcel, generateQuestionTemplate } = require('../utils/excelParser');
-const { shuffleArray, calculateGrade } = require('../utils/generateId');
+const { shuffleArray } = require('../utils/generateId');
+const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
 
@@ -111,10 +112,18 @@ const createExam = async (req, res) => {
 
     // For multi-subject, compute totalMarks from subjects
     if (examData.examType === 'multi' && Array.isArray(examData.subjects) && examData.subjects.length > 0) {
+      examData.subjects.forEach(s => {
+        if (Number(s.passMarks) > Number(s.totalMarks)) {
+          throw new Error(`Passing marks for subject "${s.subjectName}" cannot be greater than its total marks.`);
+        }
+      });
       examData.totalMarks = examData.subjects.reduce((sum, s) => sum + Number(s.totalMarks || 0), 0);
       examData.passMarks = examData.subjects.reduce((sum, s) => sum + Number(s.passMarks || 0), 0);
-      // Multi-subject uses total duration of all subjects
       examData.duration = examData.subjects.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+    } else {
+      if (Number(examData.passMarks) > Number(examData.totalMarks)) {
+        throw new Error('Passing marks cannot be greater than total marks.');
+      }
     }
 
     const exam = new Exam(examData);
@@ -133,9 +142,18 @@ const updateExam = async (req, res) => {
     const updateData = { ...req.body };
     // For multi-subject, recompute totals from subjects
     if (updateData.examType === 'multi' && Array.isArray(updateData.subjects) && updateData.subjects.length > 0) {
+      updateData.subjects.forEach(s => {
+        if (Number(s.passMarks) > Number(s.totalMarks)) {
+          throw new Error(`Passing marks for subject "${s.subjectName}" cannot be greater than its total marks.`);
+        }
+      });
       updateData.totalMarks = updateData.subjects.reduce((sum, s) => sum + Number(s.totalMarks || 0), 0);
       updateData.passMarks = updateData.subjects.reduce((sum, s) => sum + Number(s.passMarks || 0), 0);
       updateData.duration = updateData.subjects.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+    } else {
+      if (Number(updateData.passMarks) > Number(updateData.totalMarks)) {
+        throw new Error('Passing marks cannot be greater than total marks.');
+      }
     }
 
     const exam = await Exam.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
@@ -358,6 +376,46 @@ const reorderExamSubjects = async (req, res) => {
 
 // ==================== QUESTIONS ====================
 
+const syncExamMarksAndQuestions = async (examId) => {
+  const exam = await Exam.findById(examId);
+  if (!exam) return;
+  exam.totalQuestions = await Question.countDocuments({ exam: examId });
+  const allQs = await Question.find({ exam: examId });
+  const computedTotalMarks = allQs.reduce((sum, q) => sum + (q.marks || 0), 0);
+  
+  if (exam.examType !== 'multi') {
+    if (computedTotalMarks > 0) {
+      exam.totalMarks = computedTotalMarks;
+      // ensure passMarks <= totalMarks
+      if (exam.passMarks > exam.totalMarks) {
+        exam.passMarks = exam.totalMarks;
+      }
+    }
+  } else {
+    // For multi-subject, sync the subject totalMarks based on their questions
+    const subjectMarksMap = {};
+    allQs.forEach(q => {
+      const idx = q.subjectIndex || 0;
+      subjectMarksMap[idx] = (subjectMarksMap[idx] || 0) + (q.marks || 0);
+    });
+    
+    if (exam.subjects && exam.subjects.length > 0) {
+      exam.subjects.forEach((s, idx) => {
+        const computedSubjTotal = subjectMarksMap[idx] || 0;
+        if (computedSubjTotal > 0) {
+          s.totalMarks = computedSubjTotal;
+          if (s.passMarks > s.totalMarks) {
+            s.passMarks = s.totalMarks;
+          }
+        }
+      });
+      exam.totalMarks = exam.subjects.reduce((sum, s) => sum + s.totalMarks, 0);
+      exam.passMarks = exam.subjects.reduce((sum, s) => sum + s.passMarks, 0);
+    }
+  }
+  await exam.save();
+};
+
 const getQuestions = async (req, res) => {
   try {
     const query = { exam: req.params.examId };
@@ -382,9 +440,7 @@ const addQuestion = async (req, res) => {
     const question = new Question({ ...req.body, exam: req.params.examId, subjectIndex, order: count + 1 });
     await question.save();
 
-    const totalCount = await Question.countDocuments({ exam: req.params.examId });
-    exam.totalQuestions = totalCount;
-    await exam.save();
+    await syncExamMarksAndQuestions(req.params.examId);
 
     res.status(201).json({ success: true, message: 'Question added', question });
   } catch (error) {
@@ -396,6 +452,9 @@ const updateQuestion = async (req, res) => {
   try {
     const question = await Question.findByIdAndUpdate(req.params.questionId, req.body, { new: true });
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
+
+    await syncExamMarksAndQuestions(question.exam);
+
     res.json({ success: true, question });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -404,12 +463,13 @@ const updateQuestion = async (req, res) => {
 
 const deleteQuestion = async (req, res) => {
   try {
+    const question = await Question.findById(req.params.questionId);
+    if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
+    const examId = question.exam;
+
     await Question.findByIdAndDelete(req.params.questionId);
-    const exam = await Exam.findById(req.params.examId);
-    if (exam) {
-      exam.totalQuestions = await Question.countDocuments({ exam: req.params.examId });
-      await exam.save();
-    }
+    await syncExamMarksAndQuestions(examId);
+
     res.json({ success: true, message: 'Question deleted' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -440,9 +500,7 @@ const bulkUploadQuestions = async (req, res) => {
 
     await Question.insertMany(questionsWithExam);
 
-    const totalCount = await Question.countDocuments({ exam: req.params.examId });
-    exam.totalQuestions = totalCount;
-    await exam.save();
+    await syncExamMarksAndQuestions(req.params.examId);
 
     res.json({
       success: true,
@@ -478,97 +536,19 @@ const forceSubmitStudent = async (req, res) => {
     const questions = await Question.find({ exam: examId });
     const exam = await Exam.findById(examId);
 
-    // savedProgress.answers is a Map — retrieve correctly
-    const savedAnswers = result.savedProgress?.answers;
-    const optionMappings = result.savedProgress?.optionMappings;
-
-    const getAnswer = (questionId) => {
-      const qIdStr = questionId.toString();
-      if (savedAnswers && typeof savedAnswers.get === 'function') return savedAnswers.get(qIdStr);
-      if (savedAnswers && typeof savedAnswers === 'object') return savedAnswers[qIdStr];
-      return null;
-    };
-
-    const getOriginalAnswer = (questionId, displayKey) => {
-      if (!displayKey) return null;
-      if (!optionMappings) return displayKey;
-      const qIdStr = questionId.toString();
-      const mapping = typeof optionMappings.get === 'function'
-        ? optionMappings.get(qIdStr)
-        : (optionMappings[qIdStr] || null);
-      if (!mapping) return displayKey;
-      // mapping is { displayKey -> originalKey }, e.g. { A: 'C', B: 'A', C: 'D', D: 'B' }
-      return mapping[displayKey] || displayKey;
-    };
-
-    let obtainedMarks = 0, correct = 0, wrong = 0, skipped = 0;
-    const subjectStats = {};
-
-    questions.forEach(q => {
-      const si = q.subjectIndex || 0;
-      if (!subjectStats[si]) subjectStats[si] = { obtained: 0, total: 0, correct: 0, wrong: 0, skipped: 0 };
-      subjectStats[si].total += q.marks;
-
-      const displayAnswer = getAnswer(q._id);
-      const selected = getOriginalAnswer(q._id, displayAnswer);
-
-      if (!selected) {
-        skipped++;
-        subjectStats[si].skipped++;
-      } else if (selected.trim().toUpperCase() === q.correctAnswer.trim().toUpperCase()) {
-        obtainedMarks += q.marks;
-        correct++;
-        subjectStats[si].obtained += q.marks;
-        subjectStats[si].correct++;
-      } else {
-        wrong++;
-        subjectStats[si].wrong++;
-        const useNegative = exam?.examType === 'multi'
-          ? (exam.subjects[si]?.negativeMarking)
-          : exam?.negativeMarking;
-        if (useNegative && q.negativeMark > 0) {
-          obtainedMarks -= q.negativeMark;
-          subjectStats[si].obtained -= q.negativeMark;
-        }
-      }
-    });
-
-    obtainedMarks = Math.max(0, obtainedMarks);
-    const totalMarks = questions.reduce((sum, q) => sum + q.marks, 0);
-    const percentage = totalMarks > 0 ? (obtainedMarks / totalMarks) * 100 : 0;
-
-    // Build subject results for multi-subject
-    const subjectResults = [];
-    if (exam?.examType === 'multi' && exam.subjects.length > 0) {
-      exam.subjects.forEach((subj, i) => {
-        const stats = subjectStats[i] || { obtained: 0, total: subj.totalMarks, correct: 0, wrong: 0, skipped: 0 };
-        const subjObtained = Math.max(0, stats.obtained);
-        subjectResults.push({
-          subjectName: subj.subjectName,
-          subjectIndex: i,
-          obtainedMarks: subjObtained,
-          totalMarks: subj.totalMarks,
-          passMarks: subj.passMarks,
-          isPassed: subjObtained >= subj.passMarks,
-          correctAnswers: stats.correct,
-          wrongAnswers: stats.wrong,
-          skippedAnswers: stats.skipped,
-          percentage: subj.totalMarks > 0 ? (subjObtained / subj.totalMarks) * 100 : 0,
-        });
-      });
-    }
+    const evaluation = evaluateExamResult(questions, result.savedProgress?.answers, result.savedProgress?.optionMappings, exam);
 
     result.status = 'force_submitted';
     result.submittedAt = new Date();
-    result.obtainedMarks = obtainedMarks;
-    result.totalMarks = totalMarks;
-    result.correctAnswers = correct;
-    result.wrongAnswers = wrong;
-    result.skippedAnswers = skipped;
-    result.percentage = percentage;
-    result.isPassed = obtainedMarks >= (exam?.passMarks || 0);
-    result.grade = calculateGrade(percentage);
-    result.subjectResults = subjectResults;
+    result.obtainedMarks = evaluation.obtainedMarks;
+    result.totalMarks = evaluation.totalMarks;
+    result.correctAnswers = evaluation.correctAnswers;
+    result.wrongAnswers = evaluation.wrongAnswers;
+    result.skippedAnswers = evaluation.skippedAnswers;
+    result.percentage = evaluation.percentage;
+    result.isPassed = evaluation.isPassed;
+    result.grade = evaluation.grade;
+    result.subjectResults = evaluation.subjectResults;
     await result.save();
 
     await Student.findByIdAndUpdate(studentId, { currentExam: null });
