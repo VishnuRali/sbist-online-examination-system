@@ -231,6 +231,7 @@ const publishExam = async (req, res) => {
 
     try {
       report = await sendPublishNotifications(exam._id);
+      emailSuccess = report && report.eligibleCount > 0 && report.failedCount === 0 && !report.emailServiceError;
     } catch (err) {
       console.error('[publishExam] Failed to send email notifications:', err);
       emailSuccess = false;
@@ -239,20 +240,26 @@ const publishExam = async (req, res) => {
 
     res.json({
       success: true,
+      examPublished: true,
       message: 'Exam published successfully',
       exam,
+      emailServiceError: (!report && emailErrorMsg) || (report && report.emailServiceError),
       emailNotification: {
-        success: emailSuccess,
+        eligible: report ? report.eligibleCount : 0,
+        attempted: report ? (report.sentCount + report.failedCount) : 0,
         sent: report ? report.sentCount : 0,
         failed: report ? report.failedCount : 0,
-        error: emailErrorMsg || (report && report.failedCount > 0 ? 'Some email notifications failed' : '')
+        skipped: 0,
+        success: !!emailSuccess,
+        error: emailErrorMsg || (report && report.emailServiceError ? 'Email service is unavailable' : '')
       },
       report: report || {
         selectedSections: (Array.isArray(exam.sections) ? exam.sections.join(', ') : exam.section) || 'All Sections',
         eligibleCount: 0,
         sentCount: 0,
         failedCount: 0,
-        failedStudents: []
+        failedStudents: [],
+        emailServiceError: true
       }
     });
   } catch (error) {
@@ -267,32 +274,26 @@ const sendPublishNotifications = async (examId, targetFailedStudentIds = null) =
   const exam = await Exam.findById(examId).populate('department subject');
   if (!exam) throw new Error('Exam not found');
 
-  const normalizeSection = (value) => String(value || '')
-    .trim()
-    .toUpperCase();
-
-  const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
-    ? exam.sections.map(s => normalizeSection(s))
-    : (exam.section ? [normalizeSection(exam.section)] : []);
-
-  const studentQuery = {
-    department: exam.department?._id || exam.department,
-    year: String(exam.year),
-    semester: String(exam.semester),
-    isActive: true
-  };
-
-  // If specific sections are selected, limit to those sections
-  if (examSections.length > 0 && !examSections.includes('ALL') && !examSections.includes('')) {
-    studentQuery.section = { $in: examSections };
-  }
+  const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
+  const studentQuery = buildStudentEligibilityQuery(exam, { target: 'all' });
 
   // If retrying, limit only to those failed student IDs
   if (targetFailedStudentIds && Array.isArray(targetFailedStudentIds)) {
     studentQuery._id = { $in: targetFailedStudentIds };
   }
 
+  // Debug logging
+  console.log('[EXAM PUBLISH]');
+  console.log('Exam ID:', exam._id);
+  console.log('Department filter:', studentQuery.department);
+  console.log('Year filter:', studentQuery.year);
+  console.log('Semester filter:', studentQuery.semester);
+  console.log('Section filter:', studentQuery.section);
+  console.log('Final MongoDB query:', JSON.stringify(studentQuery, null, 2));
+
   const eligibleStudents = await Student.find(studentQuery).populate('department');
+  console.log('Eligible students:', eligibleStudents.length);
+  console.log('Matched Student IDs:', eligibleStudents.map(s => s.studentId || s._id));
 
   // Load SMTP config
   const { user, pass, portalUrl } = await getGmailConfig();
@@ -375,11 +376,12 @@ const sendPublishNotifications = async (examId, targetFailedStudentIds = null) =
   }
 
   return {
-    selectedSections: examSections.length > 0 ? examSections.join(', ') : 'All Sections',
+    selectedSections: (Array.isArray(exam.sections) && exam.sections.length > 0) ? exam.sections.join(', ') : (exam.section || 'All Sections'),
     eligibleCount: eligibleStudents.length,
     sentCount,
     failedCount,
-    failedStudents: failedStudentsList
+    failedStudents: failedStudentsList,
+    emailServiceError: !isSmtpConfigured
   };
 };
 

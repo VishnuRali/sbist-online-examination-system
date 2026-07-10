@@ -521,78 +521,7 @@ function emailLower(email) {
 
 // ==================== SHARED STUDENT QUERY BUILDER ====================
 
-const buildStudentQuery = (exam, body) => {
-  const { target, departmentId, year, semester, section, targetValue } = body;
-  const studentQuery = { isActive: true };
-
-  const examDeptId = exam.department?._id || exam.department;
-
-  if (target === 'student') {
-    if (targetValue) {
-      if (mongoose.Types.ObjectId.isValid(targetValue)) {
-        studentQuery._id = new mongoose.Types.ObjectId(targetValue);
-      } else {
-        studentQuery.studentId = String(targetValue).trim().toUpperCase();
-      }
-    }
-    return studentQuery;
-  }
-
-  if (target === 'filter') {
-    const deptVal = (departmentId || '').trim();
-    if (deptVal && deptVal !== '') {
-      studentQuery.department = deptVal;
-    } else if (examDeptId) {
-      studentQuery.department = examDeptId;
-    }
-
-    if (year !== undefined && year !== null && String(year).trim() !== '') {
-      studentQuery.year = String(year).trim();
-    }
-    if (semester !== undefined && semester !== null && String(semester).trim() !== '') {
-      studentQuery.semester = String(semester).trim();
-    }
-    if (section !== undefined && section !== null && String(section).trim() !== '') {
-      studentQuery.section = String(section).replace(/\s+/g, '').toUpperCase();
-    }
-  } else {
-    if (examDeptId) {
-      studentQuery.department = examDeptId;
-    }
-
-    switch (target) {
-      case 'all':
-        if (exam.year) studentQuery.year = String(exam.year).trim();
-        if (exam.semester) studentQuery.semester = String(exam.semester).trim();
-        if (exam.section && String(exam.section).trim() !== '') {
-          studentQuery.section = String(exam.section).replace(/\s+/g, '').toUpperCase();
-        }
-        break;
-      case 'department':
-        break;
-      case 'year':
-        const yVal = targetValue || exam.year;
-        if (yVal) studentQuery.year = String(yVal).trim();
-        break;
-      case 'semester':
-        const sVal = targetValue || exam.semester;
-        if (sVal) studentQuery.semester = String(sVal).trim();
-        break;
-      case 'section':
-        if (exam.year) studentQuery.year = String(exam.year).trim();
-        if (exam.semester) studentQuery.semester = String(exam.semester).trim();
-        const secVal = targetValue || exam.section;
-        if (secVal) {
-          studentQuery.section = String(secVal).replace(/\s+/g, '').toUpperCase();
-        }
-        break;
-      default:
-        break;
-    }
-  }
-
-  return studentQuery;
-};
+const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
 
 // ==================== SEND MANUAL REMINDER ====================
 
@@ -624,7 +553,7 @@ const sendManualReminders = async (req, res) => {
       return res.status(400).json({ success: false, message: 'targetValue (studentId) is required for target=student' });
     }
 
-    const studentQuery = buildStudentQuery(exam, req.body);
+    const studentQuery = buildStudentEligibilityQuery(exam, req.body);
 
     console.log('[DEBUG] Send Reminders Requested filters:', req.body);
     console.log('[DEBUG] Send Reminders Mongo query:', JSON.stringify(studentQuery, null, 2));
@@ -747,7 +676,7 @@ const previewRecipientCount = async (req, res) => {
       return res.json({ success: true, count: 0 });
     }
 
-    const studentQuery = buildStudentQuery(exam, req.body);
+    const studentQuery = buildStudentEligibilityQuery(exam, req.body);
 
     console.log('[DEBUG] Recipients Preview Requested filters:', req.body);
     console.log('[DEBUG] Recipients Preview Mongo query:', JSON.stringify(studentQuery, null, 2));

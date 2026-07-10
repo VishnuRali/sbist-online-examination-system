@@ -5,19 +5,26 @@ const Settings = require('../models/Settings');
 // Helper to load Gmail credentials from DB or Env
 const getGmailConfig = async () => {
   const settings = await Settings.findOne();
-  const user = settings?.gmailUser || process.env.GMAIL_USER;
-  const pass = settings?.gmailAppPassword || process.env.GMAIL_APP_PASSWORD;
+  const user = settings?.gmailUser || process.env.SMTP_USER || process.env.GMAIL_USER;
+  const pass = settings?.gmailAppPassword || process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD;
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(process.env.SMTP_PORT || 465);
+  const secure = process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true;
   const portalUrl = settings?.examPortalUrl || process.env.EXAM_URL || 'http://localhost:5173';
-  return { user, pass, portalUrl };
+  return { user, pass, host, port, secure, portalUrl };
 };
 
 // Create transporter
 const createTransporter = (user, pass) => {
   const isDev = process.env.NODE_ENV === 'development';
+  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(process.env.SMTP_PORT || 465);
+  const secure = process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true;
+
   const mailOptions = {
-    host: 'smtp.gmail.com',
-    port: 465,
-    secure: true,
+    host,
+    port,
+    secure,
     auth: { user, pass },
     tls: {
       // Allow self-signed certs in development (e.g. antivirus/local proxy intercepting TLS)

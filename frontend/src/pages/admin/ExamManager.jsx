@@ -365,10 +365,16 @@ export default function ExamManager() {
       const res = await api.patch(`/exam/${id}/publish`)
       const { emailNotification, report } = res.data
 
-      if (emailNotification && !emailNotification.success) {
-        toast.error('Exam published successfully, but email notifications could not be sent.', { id: 'exam-publish-status' })
+      if (emailNotification) {
+        if (emailNotification.eligible === 0) {
+          toast.success('Exam published successfully.', { id: 'exam-publish-status' })
+        } else if (!emailNotification.success) {
+          toast.error('Exam published successfully, but email notifications could not be sent.', { id: 'exam-publish-status' })
+        } else {
+          toast.success('Exam published and notifications sent successfully.', { id: 'exam-publish-status' })
+        }
       } else {
-        toast.success('Exam published and notifications sent successfully.', { id: 'exam-publish-status' })
+        toast.success('Exam published successfully.', { id: 'exam-publish-status' })
       }
 
       if (report) {
@@ -814,12 +820,52 @@ export default function ExamManager() {
                 </div>
               )}
 
-              {publishReport.failedCount === 0 && (
+              {publishReport.eligibleCount === 0 && (
+                <div className="bg-amber-500/5 border border-amber-500/20 p-4 rounded-xl flex items-center gap-3 text-amber-400">
+                  <AlertTriangle size={20} className="flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-bold">No eligible students matched this exam.</p>
+                    <p className="opacity-80 mt-0.5">Check the exam department, year, semester, section assignment, and student records.</p>
+                  </div>
+                </div>
+              )}
+
+              {publishReport.eligibleCount > 0 && publishReport.emailServiceError && (
+                <div className="bg-red-500/5 border border-red-500/20 p-4 rounded-xl flex items-center gap-3 text-red-400">
+                  <AlertTriangle size={20} className="flex-shrink-0 animate-pulse" />
+                  <div className="text-xs">
+                    <p className="font-bold">Exam published successfully, but the email service is unavailable.</p>
+                    <p className="opacity-80 mt-0.5">Please check your SMTP/Gmail configuration settings.</p>
+                  </div>
+                </div>
+              )}
+
+              {publishReport.eligibleCount > 0 && !publishReport.emailServiceError && publishReport.sentCount === publishReport.eligibleCount && publishReport.failedCount === 0 && (
                 <div className="bg-emerald-500/5 border border-emerald-500/20 p-4 rounded-xl flex items-center gap-3 text-emerald-400">
                   <CheckCircle size={20} className="flex-shrink-0" />
                   <div className="text-xs">
-                    <p className="font-bold">All notifications sent successfully!</p>
+                    <p className="font-bold">All notifications were sent successfully.</p>
                     <p className="opacity-80 mt-0.5">Every eligible student has been notified via email.</p>
+                  </div>
+                </div>
+              )}
+
+              {publishReport.eligibleCount > 0 && !publishReport.emailServiceError && publishReport.sentCount > 0 && publishReport.failedCount > 0 && (
+                <div className="bg-blue-500/5 border border-blue-500/20 p-4 rounded-xl flex items-center gap-3 text-blue-400">
+                  <CheckCircle size={20} className="flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-bold">Notifications were partially sent.</p>
+                    <p className="opacity-80 mt-0.5">Eligible: {publishReport.eligibleCount} | Sent: {publishReport.sentCount} | Failed: {publishReport.failedCount} | Skipped: 0</p>
+                  </div>
+                </div>
+              )}
+
+              {publishReport.eligibleCount > 0 && !publishReport.emailServiceError && publishReport.sentCount === 0 && publishReport.failedCount > 0 && (
+                <div className="bg-red-500/5 border border-red-500/20 p-4 rounded-xl flex items-center gap-3 text-red-400">
+                  <AlertTriangle size={20} className="flex-shrink-0" />
+                  <div className="text-xs">
+                    <p className="font-bold">Exam published successfully, but all email notifications failed.</p>
+                    <p className="opacity-80 mt-0.5">Please check your SMTP config and retry failed emails below.</p>
                   </div>
                 </div>
               )}

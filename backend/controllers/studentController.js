@@ -530,8 +530,28 @@ const submitExam = async (req, res) => {
 
     const result = await Result.findById(resultId);
     if (!result) return res.status(404).json({ success: false, message: 'Result not found' });
+    
+    const exam = await Exam.findById(result.exam);
     if (result.status !== 'in_progress') {
-      return res.status(400).json({ success: false, message: 'Exam already submitted' });
+      return res.json({
+        success: true,
+        alreadySubmitted: true,
+        message: 'Exam already submitted',
+        result: {
+          _id: result._id,
+          obtainedMarks: result.obtainedMarks,
+          totalMarks: result.totalMarks,
+          percentage: (result.percentage || 0).toFixed(2),
+          grade: result.grade,
+          isPassed: result.isPassed,
+          correctAnswers: result.correctAnswers,
+          wrongAnswers: result.wrongAnswers,
+          skippedAnswers: result.skippedAnswers,
+          status: result.status,
+          subjectResults: result.subjectResults,
+        },
+        showResult: exam?.showResultAfterExam,
+      });
     }
 
     // Merge submitted answers with existing saved answers
@@ -558,7 +578,6 @@ const submitExam = async (req, res) => {
     };
     result.markModified('savedProgress');
 
-    const exam = await Exam.findById(result.exam);
     return submitExamLogic(result, exam, res, 'submitted');
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -571,36 +590,62 @@ const submitExam = async (req, res) => {
 // ─────────────────────────────────────────────────────────────────────────────
 const submitExamLogic = async (result, exam, res, submitStatus) => {
   try {
-    const questions = await Question.find({ exam: result.exam });
-    const evaluation = evaluateExamResult(questions, result.savedProgress?.answers, result.savedProgress?.optionMappings, exam);
+    const dbResult = await Result.findById(result._id);
+    if (!dbResult) {
+      return res.status(404).json({ success: false, message: 'Result not found' });
+    }
+    if (dbResult.status !== 'in_progress') {
+      return res.json({
+        success: true,
+        alreadySubmitted: true,
+        message: 'Exam already submitted',
+        result: {
+          _id: dbResult._id,
+          obtainedMarks: dbResult.obtainedMarks,
+          totalMarks: dbResult.totalMarks,
+          percentage: (dbResult.percentage || 0).toFixed(2),
+          grade: dbResult.grade,
+          isPassed: dbResult.isPassed,
+          correctAnswers: dbResult.correctAnswers,
+          wrongAnswers: dbResult.wrongAnswers,
+          skippedAnswers: dbResult.skippedAnswers,
+          status: dbResult.status,
+          subjectResults: dbResult.subjectResults,
+        },
+        showResult: exam?.showResultAfterExam,
+      });
+    }
 
-    result.status = submitStatus;
-    result.submittedAt = new Date();
-    result.obtainedMarks = evaluation.obtainedMarks;
-    result.totalMarks = evaluation.totalMarks;
-    result.correctAnswers = evaluation.correctAnswers;
-    result.wrongAnswers = evaluation.wrongAnswers;
-    result.skippedAnswers = evaluation.skippedAnswers;
-    result.percentage = evaluation.percentage;
-    result.isPassed = evaluation.isPassed;
-    result.grade = evaluation.grade;
-    result.timeSpent = Math.floor((result.submittedAt - result.startedAt) / 1000);
-    result.subjectResults = evaluation.subjectResults;
-    await result.save();
+    const questions = await Question.find({ exam: dbResult.exam });
+    const evaluation = evaluateExamResult(questions, dbResult.savedProgress?.answers, dbResult.savedProgress?.optionMappings, exam);
+
+    dbResult.status = submitStatus;
+    dbResult.submittedAt = new Date();
+    dbResult.obtainedMarks = evaluation.obtainedMarks;
+    dbResult.totalMarks = evaluation.totalMarks;
+    dbResult.correctAnswers = evaluation.correctAnswers;
+    dbResult.wrongAnswers = evaluation.wrongAnswers;
+    dbResult.skippedAnswers = evaluation.skippedAnswers;
+    dbResult.percentage = evaluation.percentage;
+    dbResult.isPassed = evaluation.isPassed;
+    dbResult.grade = evaluation.grade;
+    dbResult.timeSpent = Math.floor((dbResult.submittedAt - dbResult.startedAt) / 1000);
+    dbResult.subjectResults = evaluation.subjectResults;
+    await dbResult.save();
 
     // Clear the student's current exam reference
-    await Student.findByIdAndUpdate(result.student, { currentExam: null });
+    await Student.findByIdAndUpdate(dbResult.student, { currentExam: null });
 
     res.json({
       success: true,
       message: 'Exam submitted successfully',
       result: {
-        _id: result._id,
+        _id: dbResult._id,
         obtainedMarks: evaluation.obtainedMarks,
         totalMarks: evaluation.totalMarks,
         percentage: evaluation.percentage.toFixed(2),
-        grade: result.grade,
-        isPassed: result.isPassed,
+        grade: dbResult.grade,
+        isPassed: dbResult.isPassed,
         correctAnswers: evaluation.correctAnswers,
         wrongAnswers: evaluation.wrongAnswers,
         skippedAnswers: evaluation.skippedAnswers,

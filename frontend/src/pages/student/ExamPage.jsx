@@ -141,8 +141,14 @@ export default function ExamPage() {
         setReviewList(result.savedProgress?.reviewList || [])
         setCurrentIdx(result.savedProgress?.currentQuestion || 0)
       } catch (err) {
-        toast.error(err.response?.data?.message || 'Failed to start exam')
-        navigate('/student')
+        const errorMsg = err.response?.data?.message || 'Failed to start exam';
+        if (errorMsg.toLowerCase().includes('already submitted')) {
+          toast.success('This exam has already been submitted. Redirecting to your results.', { id: 'already-submitted-toast' });
+          navigate('/student/results', { replace: true });
+        } else {
+          toast.error(errorMsg, { id: 'exam-start-err' });
+          navigate('/student', { replace: true });
+        }
       } finally {
         setLoading(false)
       }
@@ -319,40 +325,62 @@ export default function ExamPage() {
 
   // ── Submit ────────────────────────────────────────────────
   const handleSubmit = async () => {
+    if (submitting || submitted || submittedRef.current) return
     setSubmitting(true)
     setShowSubmitConfirm(false)
     try {
-      // Stop auto-save immediately
+      // Stop all intervals immediately
       clearInterval(autoSaveRef.current)
       clearInterval(timerRef.current)
 
       await saveProgress(false)
       const res = await api.post('/student/exams/submit', { resultId, answers, reviewList })
       setSubmitResult(res.data.result)
+      
       // Mark submitted via ref BEFORE exiting fullscreen
-      // so the fullscreenchange listener does not fire a violation
       submittedRef.current = true
       setSubmitted(true)
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-      toast.success('Exam submitted successfully!')
+      
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {})
+      }
+
+      if (res.data.alreadySubmitted) {
+        toast.success('This exam has already been submitted. Redirecting to your results.', { id: 'exam-submit-status' })
+      } else {
+        toast.success('Exam submitted successfully.', { id: 'exam-submit-status' })
+      }
+
+      setTimeout(() => {
+        navigate('/student/results', { replace: true })
+      }, 1500)
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Submission failed. Try again.')
-    } finally {
+      toast.error(err.response?.data?.message || 'Submission failed. Try again.', { id: 'exam-submit-status' })
       setSubmitting(false)
     }
   }
 
   const handleAutoSubmit = async () => {
-    if (submittedRef.current || submitting) return
+    if (submittedRef.current || submitting || submitted) return
     setSubmitting(true)
-    // Mark submitted via ref BEFORE exiting fullscreen
     submittedRef.current = true
     try {
-      await api.post('/student/exams/submit', { resultId, answers, reviewList })
+      clearInterval(autoSaveRef.current)
+      clearInterval(timerRef.current)
+      
+      const res = await api.post('/student/exams/submit', { resultId, answers, reviewList })
+      setSubmitResult(res.data.result)
       setSubmitted(true)
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+      
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => {})
+      }
+      toast.success('Exam submitted successfully.', { id: 'exam-submit-status' })
     } catch {}
-    navigate('/student/results')
+    
+    setTimeout(() => {
+      navigate('/student/results', { replace: true })
+    }, 1500)
   }
 
 
@@ -385,44 +413,20 @@ export default function ExamPage() {
   const timerWarning = timeLeft <= 600 // 10 minutes
 
   // ── Submitted screen ──────────────────────────────────────
-  if (submitted && submitResult) {
+  if (submitted) {
     return (
       <div className="min-h-screen flex items-center justify-center p-6 bg-slate-950">
         <div className="glass-card w-full max-w-lg p-8 text-center slide-up">
-          <div className={`w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 text-4xl ${
-            submitResult.isPassed ? 'bg-emerald-500/20 border border-emerald-500/40' : 'bg-red-500/20 border border-red-500/40'
-          }`}>
-            {submitResult.isPassed ? '🎉' : '😔'}
+          <div className="w-20 h-20 rounded-2xl flex items-center justify-center mx-auto mb-6 text-4xl bg-emerald-500/20 border border-emerald-500/40">
+            🎉
           </div>
           <h1 className="text-2xl font-bold text-slate-100 font-['Outfit'] mb-2">
-            {submitResult.isPassed ? 'Congratulations!' : 'Better Luck Next Time'}
+            Exam Submitted!
           </h1>
-          <p className="text-slate-400 mb-6">Your exam has been submitted successfully.</p>
-
-          <div className="grid grid-cols-2 gap-3 mb-6">
-            {[
-              { label: 'Score', value: `${submitResult.obtainedMarks}/${submitResult.totalMarks}` },
-              { label: 'Percentage', value: `${submitResult.percentage}%` },
-              { label: 'Grade', value: submitResult.grade },
-              { label: 'Result', value: submitResult.isPassed ? 'PASS ✓' : 'FAIL ✗', colored: true, pass: submitResult.isPassed },
-              { label: 'Correct', value: submitResult.correctAnswers },
-              { label: 'Wrong', value: submitResult.wrongAnswers },
-            ].map(({ label, value, colored, pass }) => (
-              <div key={label} className="bg-slate-800/50 rounded-xl p-3 border border-slate-700/30">
-                <p className="text-slate-500 text-xs mb-1">{label}</p>
-                <p className={`text-xl font-bold ${colored ? (pass ? 'text-emerald-400' : 'text-red-400') : 'text-slate-100'}`}>{value}</p>
-              </div>
-            ))}
-          </div>
-
-          <div className="flex gap-3">
-            <button onClick={() => navigate('/student')} className="btn-secondary flex-1">
-              Back to Dashboard
-            </button>
-            <button onClick={() => navigate('/student/results')} className="btn-primary flex-1">
-              View All Results
-            </button>
-          </div>
+          <p className="text-slate-400 mb-6">
+            Your exam was submitted successfully. Preparing your result...
+          </p>
+          <div className="spinner mx-auto mb-4 !w-8 !h-8 !border-t-emerald-500"></div>
         </div>
       </div>
     )
