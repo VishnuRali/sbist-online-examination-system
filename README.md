@@ -267,6 +267,15 @@ node seed-admin.js
 | `npm run build` | Build for production |
 | `npm run preview` | Preview production build |
 
+## 🚀 Features Implemented (Prompts 1-10)
+
+A suite of production-ready features has been added under this update:
+1. **Multi-Subject Exams** — Added support for Single and Multi-Subject Exams. Timers and transitions work seamlessly between subjects in sequence.
+2. **Visual Option Mapping (Evaluation Bug Fix)** — Resolved option randomization grading issues by storing and tracking visual choices back to correct database answers during submission.
+3. **Email Logs Search & Filters** — Debounced search inputs by Name, Student ID, or Email instantly querying filtered databases on the backend.
+4. **SMTP Failure & Queue System** — User-friendly message parsing, auto-retries with exponential backoffs (1m, 5m, 15m), manual single & retry-all options.
+5. **Section-wise Notifications** — Filtering by Department, Year, Semester, and Section. Displays dynamic preview of estimated recipients count. Individual student search by Name, ID, or Roll Number.
+
 ---
 
 ## 📄 License
