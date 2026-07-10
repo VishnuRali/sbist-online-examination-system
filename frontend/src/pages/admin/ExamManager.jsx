@@ -363,14 +363,23 @@ export default function ExamManager() {
   const handlePublish = async (id) => {
     try {
       const res = await api.patch(`/exam/${id}/publish`)
-      toast.success('Exam published and emails sent!')
-      setPublishReport({
-        examId: id,
-        ...res.data.report
-      })
+      const { emailNotification, report } = res.data
+
+      if (emailNotification && !emailNotification.success) {
+        toast.error('Exam published successfully, but email notifications could not be sent.', { id: 'exam-publish-status' })
+      } else {
+        toast.success('Exam published and notifications sent successfully.', { id: 'exam-publish-status' })
+      }
+
+      if (report) {
+        setPublishReport({
+          examId: id,
+          ...report
+        })
+      }
       loadData()
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to publish')
+      toast.error(err.response?.data?.message || 'Failed to publish', { id: 'exam-publish-status' })
     }
   }
 

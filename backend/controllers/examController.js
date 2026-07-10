@@ -225,10 +225,36 @@ const publishExam = async (req, res) => {
     exam.totalQuestions = questionCount;
     await exam.save();
 
-    // Trigger automatic section-wise email notifications
-    const report = await sendPublishNotifications(exam._id);
+    let report = null;
+    let emailSuccess = true;
+    let emailErrorMsg = '';
 
-    res.json({ success: true, message: 'Exam published and notifications sent', exam, report });
+    try {
+      report = await sendPublishNotifications(exam._id);
+    } catch (err) {
+      console.error('[publishExam] Failed to send email notifications:', err);
+      emailSuccess = false;
+      emailErrorMsg = err.message;
+    }
+
+    res.json({
+      success: true,
+      message: 'Exam published successfully',
+      exam,
+      emailNotification: {
+        success: emailSuccess,
+        sent: report ? report.sentCount : 0,
+        failed: report ? report.failedCount : 0,
+        error: emailErrorMsg || (report && report.failedCount > 0 ? 'Some email notifications failed' : '')
+      },
+      report: report || {
+        selectedSections: (Array.isArray(exam.sections) ? exam.sections.join(', ') : exam.section) || 'All Sections',
+        eligibleCount: 0,
+        sentCount: 0,
+        failedCount: 0,
+        failedStudents: []
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

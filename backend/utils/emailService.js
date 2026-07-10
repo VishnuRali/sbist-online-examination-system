@@ -596,5 +596,8 @@ module.exports = {
   getGmailConfig,
   sendOtpEmail,
   retryEmailLog,
-  retryAllFailedLogs
+  retryAllFailedLogs,
+  createTransporter,
+  getReminderEmailHTML,
+  parseSmtpError
 };
