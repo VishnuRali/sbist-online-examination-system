@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   LayoutDashboard, BookOpen, Users, FileText, Building2,
   BookMarked, LogOut, Menu, X, GraduationCap,
-  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon
+  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon, Tv
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -20,6 +20,7 @@ export default function AdminLayout() {
     { to: '/admin/exams', label: 'Exams', icon: BookOpen },
     { to: '/admin/students', label: 'Students', icon: Users },
     { to: '/admin/results', label: 'Results', icon: FileText },
+    { to: '/admin/live-monitor', label: 'Live Monitor', icon: Tv },
     { to: '/admin/departments', label: 'Departments', icon: Building2 },
     { to: '/admin/subjects', label: 'Subjects', icon: BookMarked },
     { to: '/admin/email-logs', label: 'Email Logs', icon: Mail },

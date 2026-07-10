@@ -581,16 +581,152 @@ const forceSubmitStudent = async (req, res) => {
 
 // ==================== RESULTS ====================
 
+const computeResultsList = async (examId, query) => {
+  const { department, year, semester, section, examStatus, resultStatus, search, dateFrom, dateTo } = query;
+
+  const exam = await Exam.findById(examId).populate('department subject');
+  if (!exam) return [];
+
+  // Find all students matching exam's target
+  const studentQuery = { isActive: true };
+  const examDeptId = exam.department?._id || exam.department;
+  if (examDeptId) studentQuery.department = examDeptId;
+  if (exam.year) studentQuery.year = String(exam.year).trim();
+  if (exam.semester) studentQuery.semester = String(exam.semester).trim();
+  if (exam.section && exam.section.trim() !== '') {
+    studentQuery.section = exam.section.trim().toUpperCase();
+  }
+
+  const students = await Student.find(studentQuery).populate('department', 'name code').select('-password');
+
+  // Find all results for this exam
+  const results = await Result.find({ exam: examId });
+
+  // Map of studentId -> result
+  const resultMap = {};
+  results.forEach(r => {
+    resultMap[r.student.toString()] = r;
+  });
+
+  const now = new Date();
+  const startTime = new Date(exam.startTime);
+  const endTime = new Date(exam.endTime);
+
+  let list = students.map(student => {
+    const result = resultMap[student._id.toString()];
+    let currentStatus = 'Not Started';
+    if (!result) {
+      if (now < startTime) currentStatus = 'Waiting';
+      else if (now > endTime) currentStatus = 'Absent';
+      else currentStatus = 'Not Started';
+    } else {
+      if (result.violations >= (exam.maxViolations || 3)) currentStatus = 'Disqualified';
+      else if (result.status === 'in_progress') currentStatus = 'In Progress (Writing Exam)';
+      else if (result.status === 'auto_submitted') currentStatus = 'Auto Submitted';
+      else if (result.status === 'submitted' || result.status === 'force_submitted') {
+        currentStatus = result.isPassed ? 'Completed' : 'Submitted';
+      }
+    }
+
+    return {
+      _id: result ? result._id : null,
+      student: {
+        _id: student._id,
+        studentId: student.studentId,
+        name: student.name,
+        rollNumber: student.rollNumber,
+        department: student.department,
+        year: student.year,
+        semester: student.semester,
+        section: student.section,
+        email: student.email,
+        mobile: student.mobile,
+        isActive: student.isActive
+      },
+      exam: {
+        _id: exam._id,
+        title: exam.title,
+        subjects: exam.examType === 'multi' ? exam.subjects.map(s => s.subjectName) : [exam.subject?.name],
+        examType: exam.examType,
+        subject: exam.subject,
+        startTime: exam.startTime,
+        endTime: exam.endTime,
+        duration: exam.duration,
+        totalMarks: exam.totalMarks,
+        passMarks: exam.passMarks
+      },
+      obtainedMarks: result ? result.obtainedMarks : 0,
+      totalMarks: result ? result.totalMarks : exam.totalMarks,
+      percentage: result ? result.percentage : 0,
+      isPassed: result ? result.isPassed : false,
+      grade: result ? result.grade : '—',
+      submittedAt: result ? result.submittedAt : null,
+      timeSpent: result ? result.timeSpent : 0,
+      violations: result ? result.violations : 0,
+      status: currentStatus,
+      resultId: result ? result._id : null,
+      subjectResults: result ? result.subjectResults : []
+    };
+  });
+
+  // Apply filters
+  if (department) {
+    list = list.filter(item => item.student.department?._id?.toString() === department);
+  }
+  if (year) {
+    list = list.filter(item => String(item.student.year).trim() === String(year).trim());
+  }
+  if (semester) {
+    list = list.filter(item => String(item.student.semester).trim() === String(semester).trim());
+  }
+  if (section) {
+    list = list.filter(item => String(item.student.section).trim().toUpperCase() === String(section).trim().toUpperCase());
+  }
+  if (examStatus) {
+    list = list.filter(item => item.status === examStatus);
+  }
+  if (resultStatus) {
+    const wantPass = resultStatus.toLowerCase() === 'pass';
+    list = list.filter(item => item.status !== 'Waiting' && item.status !== 'Not Started' && item.status !== 'Absent' && item.status !== 'In Progress (Writing Exam)' && item.isPassed === wantPass);
+  }
+  if (dateFrom) {
+    const fromDate = new Date(dateFrom);
+    list = list.filter(item => item.submittedAt && new Date(item.submittedAt) >= fromDate);
+  }
+  if (dateTo) {
+    const toDate = new Date(dateTo);
+    list = list.filter(item => item.submittedAt && new Date(item.submittedAt) <= toDate);
+  }
+  if (search) {
+    const s = search.toLowerCase().trim();
+    list = list.filter(item =>
+      item.student.name.toLowerCase().includes(s) ||
+      item.student.studentId.toLowerCase().includes(s) ||
+      item.student.rollNumber.toLowerCase().includes(s) ||
+      item.student.email.toLowerCase().includes(s) ||
+      item.student.mobile.includes(s)
+    );
+  }
+
+  // Assign Ranks based on obtainedMarks of finished students
+  const gradedList = list.filter(item => item.status !== 'Waiting' && item.status !== 'Not Started' && item.status !== 'Absent' && item.status !== 'In Progress (Writing Exam)')
+    .sort((a, b) => b.obtainedMarks - a.obtainedMarks);
+  
+  const rankMap = {};
+  gradedList.forEach((item, i) => {
+    rankMap[item.student._id.toString()] = i + 1;
+  });
+
+  return list.map(item => ({
+    ...item,
+    rank: rankMap[item.student._id.toString()] || '—'
+  }));
+};
+
 const getExamResults = async (req, res) => {
   try {
-    const results = await Result.find({ exam: req.params.examId, status: { $ne: 'in_progress' } })
-      .populate('student', 'name studentId rollNumber department year semester section')
-      .populate({ path: 'student', populate: { path: 'department', select: 'name code' } })
-      .populate('exam', 'title totalMarks passMarks examType subjects')
-      .sort({ obtainedMarks: -1 });
-
-    const rankedResults = results.map((r, i) => ({ ...r.toObject(), rank: i + 1 }));
-    res.json({ success: true, results: rankedResults });
+    const results = await computeResultsList(req.params.examId, req.query);
+    res.json({ success: true, results });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -600,38 +736,25 @@ const getExamResults = async (req, res) => {
 
 const exportResultsExcel = async (req, res) => {
   try {
-    const results = await Result.find({ exam: req.params.examId, status: { $ne: 'in_progress' } })
-      .populate({
-        path: 'student',
-        select: 'name studentId rollNumber email year semester section',
-        populate: { path: 'department', select: 'name' }
-      })
-      .populate({
-        path: 'exam',
-        select: 'title totalMarks passMarks subject examType subjects',
-        populate: { path: 'subject', select: 'name' }
-      })
-      .sort({ obtainedMarks: -1 });
-
+    const results = await computeResultsList(req.params.examId, req.query);
     const workbook = new ExcelJS.Workbook();
     const sheet = workbook.addWorksheet('Results');
 
     const exam = results[0]?.exam;
     const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const subjectNames = isMulti ? exam.subjects.map(s => s.subjectName) : [];
+    const subjectNames = isMulti ? exam.subjects : [];
 
-    sheet.mergeCells('A1:P1');
+    sheet.mergeCells('A1:Q1');
     sheet.getCell('A1').value = 'SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY';
     sheet.getCell('A1').font = { bold: true, size: 14 };
     sheet.getCell('A1').alignment = { horizontal: 'center' };
 
-    sheet.mergeCells('A2:P2');
+    sheet.mergeCells('A2:Q2');
     sheet.getCell('A2').value = `Result Report: ${exam?.title || 'Exam'}`;
     sheet.getCell('A2').font = { bold: true, size: 12 };
     sheet.getCell('A2').alignment = { horizontal: 'center' };
     sheet.addRow([]);
 
-    // Build columns dynamically
     const baseColumns = [
       { header: 'Rank', key: 'rank', width: 8 },
       { header: 'Student ID', key: 'studentId', width: 18 },
@@ -640,6 +763,9 @@ const exportResultsExcel = async (req, res) => {
       { header: 'Department', key: 'department', width: 20 },
       { header: 'Year', key: 'year', width: 8 },
       { header: 'Semester', key: 'semester', width: 10 },
+      { header: 'Section', key: 'section', width: 10 },
+      { header: 'Email', key: 'email', width: 25 },
+      { header: 'Mobile', key: 'mobile', width: 15 },
     ];
 
     const subjectColumns = subjectNames.map((sn, i) => [
@@ -652,9 +778,8 @@ const exportResultsExcel = async (req, res) => {
       { header: 'Obtained', key: 'obtained', width: 12 },
       { header: 'Percentage', key: 'percentage', width: 12 },
       { header: 'Grade', key: 'grade', width: 10 },
-      { header: 'Status', key: 'status', width: 10 },
-      { header: 'Correct', key: 'correct', width: 10 },
-      { header: 'Wrong', key: 'wrong', width: 10 },
+      { header: 'Exam Status', key: 'status', width: 20 },
+      { header: 'Violations', key: 'violations', width: 12 },
     ];
 
     sheet.columns = [...baseColumns, ...subjectColumns, ...trailingColumns];
@@ -663,25 +788,26 @@ const exportResultsExcel = async (req, res) => {
     headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
     headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
 
-    results.forEach((r, i) => {
+    results.forEach((r) => {
       const rowData = {
-        rank: i + 1,
+        rank: r.rank,
         studentId: r.student?.studentId,
         name: r.student?.name,
         rollNumber: r.student?.rollNumber,
         department: r.student?.department?.name || 'N/A',
         year: r.student?.year || '',
         semester: r.student?.semester || '',
+        section: r.student?.section || '',
+        email: r.student?.email || '',
+        mobile: r.student?.mobile || '',
         total: r.totalMarks,
         obtained: r.obtainedMarks,
         percentage: `${(r.percentage || 0).toFixed(2)}%`,
         grade: r.grade,
-        status: r.isPassed ? 'PASS' : 'FAIL',
-        correct: r.correctAnswers,
-        wrong: r.wrongAnswers,
+        status: r.status,
+        violations: r.violations,
       };
 
-      // Add per-subject data
       if (isMulti && r.subjectResults) {
         subjectNames.forEach((sn, si) => {
           const sr = r.subjectResults.find(x => x.subjectIndex === si);
@@ -692,9 +818,11 @@ const exportResultsExcel = async (req, res) => {
 
       const row = sheet.addRow(rowData);
       const statusCell = row.getCell('status');
+      const hasTaken = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
+      const isPassedVal = hasTaken && r.isPassed;
       statusCell.fill = {
         type: 'pattern', pattern: 'solid',
-        fgColor: { argb: r.isPassed ? 'FF16A34A' : 'FFDC2626' }
+        fgColor: { argb: isPassedVal ? 'FF16A34A' : (hasTaken ? 'FFDC2626' : 'FF64748B') }
       };
       statusCell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
     });
@@ -712,18 +840,13 @@ const exportResultsExcel = async (req, res) => {
 
 const exportResultsCSV = async (req, res) => {
   try {
-    const results = await Result.find({ exam: req.params.examId, status: { $ne: 'in_progress' } })
-      .populate({ path: 'student', select: 'name studentId rollNumber year semester', populate: { path: 'department', select: 'name' } })
-      .populate({ path: 'exam', select: 'title totalMarks passMarks subject examType subjects', populate: { path: 'subject', select: 'name' } })
-      .sort({ obtainedMarks: -1 });
-
+    const results = await computeResultsList(req.params.examId, req.query);
     const exam = results[0]?.exam;
     const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const subjectNames = isMulti ? exam.subjects.map(s => s.subjectName) : [];
+    const subjectNames = isMulti ? exam.subjects : [];
     const examTitle = exam?.title || 'Exam';
 
-    // Build header
-    let headerParts = ['Rank', 'Student ID', 'Name', 'Roll No', 'Department', 'Year', 'Semester'];
+    let headerParts = ['Rank', 'Student ID', 'Name', 'Roll No', 'Department', 'Year', 'Semester', 'Section', 'Email', 'Mobile'];
     if (isMulti) {
       subjectNames.forEach(sn => {
         headerParts.push(`"${sn} Marks"`, `"${sn} Status"`);
@@ -731,18 +854,21 @@ const exportResultsCSV = async (req, res) => {
     } else {
       headerParts.push('Subject');
     }
-    headerParts = [...headerParts, 'Total Marks', 'Obtained', 'Percentage', 'Grade', 'Status', 'Correct', 'Wrong', 'Skipped'];
+    headerParts = [...headerParts, 'Total Marks', 'Obtained', 'Percentage', 'Grade', 'Exam Status', 'Violations'];
     const header = headerParts.join(',') + '\n';
 
-    const rows = results.map((r, i) => {
+    const rows = results.map((r) => {
       const parts = [
-        i + 1,
+        r.rank,
         r.student?.studentId || '',
         `"${r.student?.name || ''}"`,
         r.student?.rollNumber || '',
         `"${r.student?.department?.name || ''}"`,
         r.student?.year || '',
         r.student?.semester || '',
+        r.student?.section || '',
+        r.student?.email || '',
+        r.student?.mobile || '',
       ];
 
       if (isMulti) {
@@ -760,10 +886,8 @@ const exportResultsCSV = async (req, res) => {
         r.obtainedMarks,
         `${(r.percentage || 0).toFixed(2)}%`,
         r.grade,
-        r.isPassed ? 'PASS' : 'FAIL',
-        r.correctAnswers,
-        r.wrongAnswers,
-        r.skippedAnswers,
+        `"${r.status}"`,
+        r.violations,
       );
       return parts.join(',');
     }).join('\n');
@@ -781,14 +905,10 @@ const exportResultsCSV = async (req, res) => {
 
 const exportResultsPDF = async (req, res) => {
   try {
-    const results = await Result.find({ exam: req.params.examId, status: { $ne: 'in_progress' } })
-      .populate({ path: 'student', select: 'name studentId rollNumber year semester', populate: { path: 'department', select: 'name' } })
-      .populate({ path: 'exam', select: 'title totalMarks passMarks subject startTime examType subjects', populate: { path: 'subject', select: 'name' } })
-      .sort({ obtainedMarks: -1 });
-
+    const results = await computeResultsList(req.params.examId, req.query);
     const exam = results[0]?.exam;
     const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const doc = new PDFDocument({ margin: 40, size: 'A4', layout: 'landscape' });
+    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=results_${req.params.examId}.pdf`);
     doc.pipe(res);
@@ -796,49 +916,53 @@ const exportResultsPDF = async (req, res) => {
     // Header
     doc.rect(0, 0, doc.page.width, 80).fill('#1e3a8a');
     doc.fillColor('white').fontSize(16).font('Helvetica-Bold')
-      .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 40, 18, { align: 'center' });
+      .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 30, 18, { align: 'center' });
     const subjectLabel = isMulti
-      ? `Subjects: ${exam.subjects.map(s => s.subjectName).join(', ')}`
+      ? `Subjects: ${exam.subjects.join(', ')}`
       : `Subject: ${exam?.subject?.name || '—'}`;
     doc.fontSize(11).font('Helvetica')
-      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${new Date().toLocaleString('en-IN')}`, 40, 44, { align: 'center' });
+      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${new Date().toLocaleString('en-IN')}`, 30, 44, { align: 'center' });
 
     // Stats bar
     const total = results.length;
-    const passed = results.filter(r => r.isPassed).length;
-    const avgPct = total > 0 ? (results.reduce((s, r) => s + (r.percentage || 0), 0) / total).toFixed(1) : 0;
+    const submittedCount = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status)).length;
+    const passed = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) && r.isPassed).length;
+    const avgPct = submittedCount > 0 ? (results.reduce((s, r) => s + (['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) ? (r.percentage || 0) : 0), 0) / submittedCount).toFixed(1) : 0;
     doc.rect(0, 80, doc.page.width, 28).fill('#0f172a');
-    doc.fillColor('#94a3b8').font('Helvetica').fontSize(10)
-      .text(`Total Students: ${total}   |   Passed: ${passed}   |   Failed: ${total - passed}   |   Pass Rate: ${total > 0 ? ((passed / total) * 100).toFixed(1) : 0}%   |   Avg Score: ${avgPct}%`, 40, 89, { align: 'center' });
+    doc.fillColor('#94a3b8').font('Helvetica').fontSize(9)
+      .text(`Total: ${total}   |   Submitted: ${submittedCount}   |   Passed: ${passed}   |   Failed: ${submittedCount - passed}   |   Avg Score: ${avgPct}%`, 30, 89, { align: 'center' });
 
-    // Table
+    // Table Columns
     const cols = isMulti
-      ? [25, 55, 100, 55, 90, ...exam.subjects.map(() => [45, 35]).flat(), 40, 40, 35, 30, 40]
-      : [30, 60, 110, 60, 110, 110, 45, 45, 40, 40, 45];
+      ? [20, 45, 80, 45, 60, 45, 45, 50, ...exam.subjects.map(() => [35, 30]).flat(), 35, 30, 30, 25, 40]
+      : [25, 50, 90, 50, 70, 50, 50, 60, 100, 35, 35, 30, 30, 50];
     const headers = isMulti
-      ? ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', ...exam.subjects.map(s => [`${s.subjectName.slice(0, 6)} Marks`, 'Status']).flat(), 'Total', 'Marks', '%', 'Grd', 'Status']
-      : ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Subject', 'Total', 'Marks', '%', 'Grade', 'Status'];
+      ? ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', ...exam.subjects.map(s => [`${s.slice(0, 5)}`, 'Status']).flat(), 'Total', 'Marks', '%', 'Grd', 'Status']
+      : ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', 'Subject', 'Total', 'Marks', '%', 'Grade', 'Status'];
 
     let y = 120;
-    doc.rect(40, y, doc.page.width - 80, 20).fill('#1e40af');
-    doc.fillColor('white').font('Helvetica-Bold').fontSize(7);
-    let x = 42;
+    doc.rect(30, y, doc.page.width - 60, 20).fill('#1e40af');
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(6.5);
+    let x = 32;
     headers.forEach((h, i) => { doc.text(h, x, y + 6, { width: cols[i] - 2 }); x += cols[i]; });
     y += 20;
 
     results.forEach((r, idx) => {
       const rowFill = idx % 2 === 0 ? '#f8fafc' : 'white';
-      doc.rect(40, y, doc.page.width - 80, 18).fill(rowFill);
-      doc.fillColor('#1e293b').font('Helvetica').fontSize(7);
-      x = 42;
+      doc.rect(30, y, doc.page.width - 60, 18).fill(rowFill);
+      doc.fillColor('#1e293b').font('Helvetica').fontSize(6.5);
+      x = 32;
 
       const vals = isMulti
         ? [
-          String(idx + 1),
+          String(r.rank),
           r.student?.studentId || '',
           r.student?.name || '',
           r.student?.rollNumber || '',
-          r.student?.department?.name || '',
+          r.student?.department?.code || '',
+          String(r.student?.year || ''),
+          String(r.student?.semester || ''),
+          r.student?.section || '',
           ...exam.subjects.map((s, si) => {
             const sr = r.subjectResults?.find(x => x.subjectIndex === si);
             return [sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : '-', sr ? (sr.isPassed ? 'PASS' : 'FAIL') : '-'];
@@ -847,25 +971,30 @@ const exportResultsPDF = async (req, res) => {
           String(r.obtainedMarks),
           `${(r.percentage || 0).toFixed(1)}%`,
           r.grade,
-          r.isPassed ? 'PASS' : 'FAIL',
+          r.status,
         ]
         : [
-          String(idx + 1),
+          String(r.rank),
           r.student?.studentId || '',
           r.student?.name || '',
           r.student?.rollNumber || '',
-          r.student?.department?.name || '',
+          r.student?.department?.code || '',
+          String(r.student?.year || ''),
+          String(r.student?.semester || ''),
+          r.student?.section || '',
           r.exam?.subject?.name || '',
           String(r.totalMarks),
           String(r.obtainedMarks),
           `${(r.percentage || 0).toFixed(1)}%`,
           r.grade,
-          r.isPassed ? 'PASS' : 'FAIL',
+          r.status,
         ];
 
       vals.forEach((v, i) => {
         const isStatusCol = i === vals.length - 1;
-        doc.fillColor(isStatusCol ? (r.isPassed ? '#15803d' : '#b91c1c') : '#1e293b')
+        const hasTaken = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
+        const isPassedVal = hasTaken && r.isPassed;
+        doc.fillColor(isStatusCol ? (isPassedVal ? '#15803d' : (hasTaken ? '#b91c1c' : '#64748b')) : '#1e293b')
           .text(v, x, y + 5, { width: cols[i] - 2 });
         x += cols[i];
       });

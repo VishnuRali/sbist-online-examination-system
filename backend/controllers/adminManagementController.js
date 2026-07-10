@@ -200,10 +200,25 @@ const { retryEmailLog, retryAllFailedLogs } = require('../utils/emailService');
 
 const getEmailLogs = async (req, res) => {
   try {
-    const { type, status, page = 1, limit = 30, search } = req.query;
+    const { type, status, department, year, semester, section, exam, subject, dateFrom, dateTo, page = 1, limit = 30, search } = req.query;
     const query = {};
     if (type) query.type = type;
     if (status) query.status = status;
+    if (department) query.department = department;
+    if (year) query.year = String(year).trim();
+    if (semester) query.semester = String(semester).trim();
+    if (section) query.section = String(section).trim().toUpperCase();
+    if (exam) query.exam = exam;
+    if (subject) {
+      const Exam = require('../models/Exam');
+      const matchingExams = await Exam.find({ subject }).select('_id');
+      query.exam = { $in: matchingExams.map(e => e._id) };
+    }
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+      if (dateTo) query.createdAt.$lte = new Date(dateTo);
+    }
 
     if (search) {
       const cleanSearch = String(search).trim();
@@ -816,6 +831,128 @@ const testSettings = async (req, res) => {
   }
 };
 
+const getLiveMonitorData = async (req, res) => {
+  try {
+    const { departmentId, year, semester, section, examId } = req.query;
+
+    const Exam = require('../models/Exam');
+    let examQuery = {};
+    if (examId) {
+      examQuery._id = examId;
+    } else {
+      examQuery.status = { $in: ['active', 'scheduled', 'completed'] };
+    }
+
+    const exams = await Exam.find(examQuery).populate('department subject');
+    if (examId && exams.length === 0) {
+      return res.status(404).json({ success: false, message: 'Exam not found' });
+    }
+
+    // Resolve targeted students across these exams
+    const now = new Date();
+    let totalStudents = 0, waiting = 0, writing = 0, submitted = 0, autoSubmitted = 0, absent = 0, disqualified = 0;
+    const studentsDetails = [];
+
+    for (const exam of exams) {
+      const studentQuery = { isActive: true };
+      const examDeptId = exam.department?._id || exam.department;
+
+      // Filter by departmentId if requested
+      if (departmentId) {
+        if (examDeptId && examDeptId.toString() !== departmentId) continue;
+        studentQuery.department = departmentId;
+      } else if (examDeptId) {
+        studentQuery.department = examDeptId;
+      }
+
+      if (year) {
+        if (exam.year && String(exam.year).trim() !== String(year).trim()) continue;
+        studentQuery.year = String(year).trim();
+      } else if (exam.year) {
+        studentQuery.year = String(exam.year).trim();
+      }
+
+      if (semester) {
+        if (exam.semester && String(exam.semester).trim() !== String(semester).trim()) continue;
+        studentQuery.semester = String(semester).trim();
+      } else if (exam.semester) {
+        studentQuery.semester = String(exam.semester).trim();
+      }
+
+      if (section) {
+        if (exam.section && String(exam.section).trim().toUpperCase() !== String(section).trim().toUpperCase()) continue;
+        studentQuery.section = String(section).trim().toUpperCase();
+      } else if (exam.section && exam.section.trim() !== '') {
+        studentQuery.section = exam.section.trim().toUpperCase();
+      }
+
+      const students = await Student.find(studentQuery).populate('department', 'name code').select('-password');
+      const results = await Result.find({ exam: exam._id });
+
+      const resultMap = {};
+      results.forEach(r => {
+        resultMap[r.student.toString()] = r;
+      });
+
+      const startTime = new Date(exam.startTime);
+      const endTime = new Date(exam.endTime);
+
+      students.forEach(student => {
+        const result = resultMap[student._id.toString()];
+        let status = 'Not Started';
+
+        if (!result) {
+          if (now < startTime) status = 'Waiting';
+          else if (now > endTime) status = 'Absent';
+          else status = 'Waiting'; // Treat not started yet as waiting/not active
+        } else {
+          if (result.violations >= (exam.maxViolations || 3)) status = 'Disqualified';
+          else if (result.status === 'in_progress') status = 'Currently Writing Exam';
+          else if (result.status === 'auto_submitted') status = 'Auto Submitted';
+          else if (result.status === 'submitted' || result.status === 'force_submitted') status = 'Submitted';
+        }
+
+        // Increment stats counters
+        totalStudents++;
+        if (status === 'Waiting') waiting++;
+        else if (status === 'Currently Writing Exam') writing++;
+        else if (status === 'Submitted') submitted++;
+        else if (status === 'Auto Submitted') autoSubmitted++;
+        else if (status === 'Absent') absent++;
+        else if (status === 'Disqualified') disqualified++;
+
+        studentsDetails.push({
+          studentId: student.studentId,
+          name: student.name,
+          rollNumber: student.rollNumber,
+          department: student.department?.code || 'N/A',
+          classDetails: `Y${student.year}/S${student.semester}/Sec ${student.section || '—'}`,
+          status,
+          violations: result ? result.violations : 0,
+          examTitle: exam.title,
+          isOnline: student.isLoggedIn
+        });
+      });
+    }
+
+    res.json({
+      success: true,
+      stats: {
+        totalStudents,
+        waiting,
+        writing,
+        submitted,
+        autoSubmitted,
+        absent,
+        disqualified
+      },
+      students: studentsDetails
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllAdmins, createAdmin, updateAdmin, deleteAdmin, toggleAdminStatus,
   resetAdminPassword, getAdminActivityLogs,
@@ -825,5 +962,6 @@ module.exports = {
   getSettings, saveSettings, testSettings,
   retrySingleEmail, retryAllFailedEmails,
   exportFailedEmailLogs,
-  previewRecipientCount
+  previewRecipientCount,
+  getLiveMonitorData
 };

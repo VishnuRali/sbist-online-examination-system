@@ -13,24 +13,30 @@ const PDFDocument = require('pdfkit');
 
 const getAllStudents = async (req, res) => {
   try {
-    const { department, year, semester, search, page = 1, limit = 20 } = req.query;
+    const { department, year, semester, section, status, search, page = 1, limit = 20 } = req.query;
     const query = {};
     if (department) query.department = department;
     if (year) query.year = year;
     if (semester) query.semester = semester;
+    if (section) query.section = section.trim().toUpperCase();
+    if (status !== undefined && status !== '') {
+      query.isActive = status === 'active' || status === 'true';
+    }
     if (search) {
+      const cleanSearch = search.trim();
       query.$or = [
-        { name: { $regex: search, $options: 'i' } },
-        { studentId: { $regex: search, $options: 'i' } },
-        { rollNumber: { $regex: search, $options: 'i' } },
-        { email: { $regex: search, $options: 'i' } },
+        { name: { $regex: cleanSearch, $options: 'i' } },
+        { studentId: { $regex: cleanSearch, $options: 'i' } },
+        { rollNumber: { $regex: cleanSearch, $options: 'i' } },
+        { email: { $regex: cleanSearch, $options: 'i' } },
+        { mobile: { $regex: cleanSearch, $options: 'i' } },
       ];
     }
 
     const total = await Student.countDocuments(query);
     const students = await Student.find(query)
       .populate('department', 'name code')
-      .select('-password')
+      .select('-password -auditLog')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
       .limit(parseInt(limit));
@@ -371,10 +377,212 @@ const downloadCSVTemplate = async (req, res) => {
   }
 };
 
+// ==================== UPDATE STUDENT PROFILE (Admin only) ====================
+
+const updateStudentProfile = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const student = await Student.findById(studentId).populate('department', 'name code');
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    const allowedFields = ['department', 'year', 'semester', 'section', 'rollNumber', 'email', 'mobile', 'isActive'];
+    const adminName = req.admin?.name || 'Admin';
+    const adminRole = req.admin?.role || 'admin';
+    const changes = [];
+
+    for (const field of allowedFields) {
+      if (req.body[field] === undefined) continue;
+      let newVal = req.body[field];
+      let oldVal;
+
+      if (field === 'department') {
+        oldVal = student.department?._id?.toString() || student.department?.toString();
+        // Resolve department name for audit
+        const dept = await Department.findById(newVal);
+        const oldDept = await Department.findById(oldVal);
+        if (oldVal !== newVal) {
+          changes.push({ field: 'Department', oldValue: oldDept?.code || oldVal || '—', newValue: dept?.code || newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+        }
+      } else if (field === 'section') {
+        newVal = String(newVal).replace(/\s+/g, '').toUpperCase();
+        oldVal = student[field];
+        if (oldVal !== newVal) {
+          changes.push({ field: 'Section', oldValue: oldVal || '—', newValue: newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+        }
+      } else if (field === 'email') {
+        newVal = String(newVal).toLowerCase().trim();
+        oldVal = student[field];
+        // Check duplicate email
+        if (oldVal !== newVal) {
+          const existing = await Student.findOne({ email: newVal, _id: { $ne: student._id } });
+          if (existing) return res.status(400).json({ success: false, message: 'Email already in use by another student' });
+          changes.push({ field: 'Email', oldValue: oldVal || '—', newValue: newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+        }
+      } else {
+        oldVal = student[field] !== undefined ? String(student[field]) : '—';
+        const newValStr = String(newVal);
+        if (oldVal !== newValStr) {
+          const labelMap = { year: 'Year', semester: 'Semester', rollNumber: 'Roll Number', mobile: 'Mobile', isActive: 'Status' };
+          const label = labelMap[field] || field;
+          const displayOld = field === 'isActive' ? (student[field] ? 'Active' : 'Inactive') : oldVal;
+          const displayNew = field === 'isActive' ? (newVal ? 'Active' : 'Inactive') : newValStr;
+          changes.push({ field: label, oldValue: displayOld, newValue: displayNew, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+        }
+      }
+
+      student[field] = newVal;
+    }
+
+    if (changes.length === 0) {
+      return res.json({ success: true, message: 'No changes detected', student });
+    }
+
+    // Append to audit log (keep last 200)
+    student.auditLog.push(...changes);
+    if (student.auditLog.length > 200) {
+      student.auditLog = student.auditLog.slice(student.auditLog.length - 200);
+    }
+
+    await student.save();
+
+    const changeDesc = changes.map(c => `${c.field}: ${c.oldValue} → ${c.newValue}`).join(', ');
+    await req.admin.logActivity('UPDATE_STUDENT', `Updated student ${student.studentId}: ${changeDesc}`, req.ip);
+
+    const updated = await Student.findById(student._id).populate('department', 'name code').select('-password');
+    res.json({ success: true, message: `Student updated successfully (${changes.length} change${changes.length > 1 ? 's' : ''})`, student: updated, changes });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==================== BULK UPDATE STUDENTS (Admin only) ====================
+
+const bulkUpdateStudents = async (req, res) => {
+  try {
+    const { studentIds, action, value } = req.body;
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+      return res.status(400).json({ success: false, message: 'studentIds array is required' });
+    }
+    if (!action) return res.status(400).json({ success: false, message: 'action is required' });
+
+    const validActions = ['department', 'year', 'semester', 'section', 'activate', 'deactivate', 'promoteYear'];
+    if (!validActions.includes(action)) {
+      return res.status(400).json({ success: false, message: `Invalid action. Use: ${validActions.join(', ')}` });
+    }
+
+    const adminName = req.admin?.name || 'Admin';
+    const adminRole = req.admin?.role || 'admin';
+    const students = await Student.find({ _id: { $in: studentIds } });
+    let updatedCount = 0;
+
+    for (const student of students) {
+      const changes = [];
+
+      if (action === 'activate' || action === 'deactivate') {
+        const newStatus = action === 'activate';
+        if (student.isActive !== newStatus) {
+          changes.push({ field: 'Status', oldValue: student.isActive ? 'Active' : 'Inactive', newValue: newStatus ? 'Active' : 'Inactive', changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+          student.isActive = newStatus;
+        }
+      } else if (action === 'promoteYear') {
+        const currentYear = parseInt(student.year);
+        if (currentYear < 4) {
+          const newYear = String(currentYear + 1);
+          changes.push({ field: 'Year', oldValue: student.year, newValue: newYear, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+          student.year = newYear;
+        }
+      } else if (action === 'section') {
+        const newSection = String(value || '').replace(/\s+/g, '').toUpperCase();
+        if (student.section !== newSection) {
+          changes.push({ field: 'Section', oldValue: student.section || '—', newValue: newSection, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+          student.section = newSection;
+        }
+      } else {
+        const oldVal = String(student[action] || '—');
+        const newVal = String(value || '');
+        if (oldVal !== newVal) {
+          const labelMap = { department: 'Department', year: 'Year', semester: 'Semester' };
+          changes.push({ field: labelMap[action] || action, oldValue: oldVal, newValue: newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+          student[action] = value;
+        }
+      }
+
+      if (changes.length > 0) {
+        student.auditLog.push(...changes);
+        if (student.auditLog.length > 200) student.auditLog = student.auditLog.slice(student.auditLog.length - 200);
+        await student.save();
+        updatedCount++;
+      }
+    }
+
+    await req.admin.logActivity('BULK_UPDATE_STUDENTS', `Bulk ${action} on ${updatedCount}/${studentIds.length} students`, req.ip);
+    res.json({ success: true, message: `${updatedCount} student(s) updated`, updatedCount, total: studentIds.length });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==================== STUDENT AUDIT LOG ====================
+
+const getStudentAuditLog = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const student = await Student.findById(studentId).select('studentId name auditLog');
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+    const log = [...(student.auditLog || [])].reverse();
+    res.json({ success: true, student: { studentId: student.studentId, name: student.name }, log });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ==================== EXPORT SELECTED STUDENTS ====================
+
+const exportSelectedStudents = async (req, res) => {
+  try {
+    const { studentIds } = req.body;
+    const query = studentIds && studentIds.length > 0 ? { _id: { $in: studentIds } } : {};
+    const students = await Student.find(query).populate('department', 'name code').select('-password -auditLog').sort({ createdAt: -1 });
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Students');
+    sheet.columns = [
+      { header: 'Student ID', key: 'studentId', width: 20 },
+      { header: 'Name', key: 'name', width: 28 },
+      { header: 'Roll Number', key: 'rollNumber', width: 18 },
+      { header: 'Department', key: 'department', width: 25 },
+      { header: 'Year', key: 'year', width: 8 },
+      { header: 'Semester', key: 'semester', width: 10 },
+      { header: 'Section', key: 'section', width: 10 },
+      { header: 'Email', key: 'email', width: 32 },
+      { header: 'Mobile', key: 'mobile', width: 16 },
+      { header: 'Status', key: 'status', width: 12 },
+      { header: 'Registered', key: 'createdAt', width: 18 },
+    ];
+    sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
+    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E3A5F' } };
+    students.forEach(s => sheet.addRow({
+      studentId: s.studentId, name: s.name, rollNumber: s.rollNumber,
+      department: s.department?.name || '', year: s.year, semester: s.semester,
+      section: s.section || '', email: s.email, mobile: s.mobile,
+      status: s.isActive ? 'Active' : 'Inactive',
+      createdAt: new Date(s.createdAt).toLocaleDateString(),
+    }));
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.setHeader('Content-Disposition', 'attachment; filename=selected_students.xlsx');
+    await workbook.xlsx.write(res);
+    res.end();
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllStudents, getActiveStudents, generateStudentCredentials, toggleStudentStatus,
   forceLogoutStudent, getDepartments, createDepartment, updateDepartment, deleteDepartment,
   getSubjects, createSubject, updateSubject, deleteSubject,
-  getDashboardStats, exportStudentsExcel, downloadCSVTemplate
+  getDashboardStats, exportStudentsExcel, downloadCSVTemplate,
+  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents
 };
 

@@ -235,6 +235,9 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
     <p style="color:#1e40af;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px;">📝 Exam Details</p>
     <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:20px;">
       <tbody>
+        ${infoRow('Student Name',    student.name)}
+        ${infoRow('Student ID',      student.studentId)}
+        ${infoRow('Roll Number',     student.rollNumber || '—')}
         ${infoRow('Exam Title',     exam.title)}
         ${infoRow('Subject',        subjectName)}
         ${infoRow('Department',     deptName)}
@@ -245,7 +248,6 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
         ${infoRow('Duration',       `${exam.duration} Minutes`)}
         ${infoRow('Total Marks',    String(exam.totalMarks || '—'))}
         ${infoRow('Pass Marks',     String(exam.passMarks  || '—'))}
-        ${infoRow('Your Student ID', student.studentId)}
       </tbody>
     </table>
 

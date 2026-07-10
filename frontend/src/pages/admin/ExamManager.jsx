@@ -6,7 +6,7 @@ import toast from 'react-hot-toast'
 import {
   Plus, Edit2, Trash2, BookOpen,
   Calendar, Clock, AlertTriangle,
-  List, Send, Layers, GripVertical, X, ChevronUp, ChevronDown
+  List, Send, Layers, GripVertical, X, ChevronUp, ChevronDown, Filter
 } from 'lucide-react'
 
 const EMPTY_SUBJECT = {
@@ -230,10 +230,29 @@ export default function ExamManager() {
   const [saving, setSaving] = useState(false)
   const [deleting, setDeleting] = useState(null)
 
+  // Advanced Filters
+  const [filterDept, setFilterDept] = useState('')
+  const [filterYear, setFilterYear] = useState('')
+  const [filterSem, setFilterSem] = useState('')
+  const [filterSection, setFilterSection] = useState('')
+  const [filterSubject, setFilterSubject] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+
   const loadData = async () => {
     try {
+      const params = {}
+      if (filterDept) params.department = filterDept
+      if (filterYear) params.year = filterYear
+      if (filterSem) params.semester = filterSem
+      if (filterSection) params.section = filterSection
+      if (filterSubject) params.subject = filterSubject
+      if (filterDateFrom) params.dateFrom = filterDateFrom
+      if (filterDateTo) params.dateTo = filterDateTo
+
       const [examRes, subjRes, deptRes] = await Promise.all([
-        api.get('/exam'),
+        api.get('/exam', { params }),
         api.get('/admin/subjects'),
         api.get('/admin/departments'),
       ])
@@ -245,7 +264,9 @@ export default function ExamManager() {
     }
   }
 
-  useEffect(() => { loadData() }, [])
+  useEffect(() => {
+    loadData()
+  }, [filterDept, filterYear, filterSem, filterSection, filterSubject, filterDateFrom, filterDateTo])
 
   const openCreate = () => { setForm(EMPTY_FORM); setEditExam(null); setShowModal(true) }
   const openEdit = (exam) => {
@@ -355,6 +376,79 @@ export default function ExamManager() {
         <button onClick={openCreate} className="btn-primary flex items-center gap-2 btn-sm">
           <Plus size={16} /> Create Exam
         </button>
+      </div>
+
+      {/* Advanced Filters */}
+      <div className="space-y-3">
+        <div className="flex gap-3 flex-wrap">
+          <button onClick={() => setShowFilters(v => !v)}
+            className={`btn-secondary btn-sm flex items-center gap-2 text-xs ${
+              [filterDept, filterYear, filterSem, filterSection, filterSubject, filterDateFrom, filterDateTo].filter(Boolean).length > 0 ? 'border-blue-500/50 text-blue-400' : ''
+            }`}>
+            <Filter size={14} />
+            Filters {[filterDept, filterYear, filterSem, filterSection, filterSubject, filterDateFrom, filterDateTo].filter(Boolean).length > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                {[filterDept, filterYear, filterSem, filterSection, filterSubject, filterDateFrom, filterDateTo].filter(Boolean).length}
+              </span>
+            )}
+          </button>
+          {[filterDept, filterYear, filterSem, filterSection, filterSubject, filterDateFrom, filterDateTo].some(Boolean) && (
+            <button onClick={() => {
+              setFilterDept(''); setFilterYear(''); setFilterSem(''); setFilterSection(''); setFilterSubject(''); setFilterDateFrom(''); setFilterDateTo('');
+            }} className="btn-secondary btn-sm text-xs text-red-400 border-red-500/30">
+              <X size={12} /> Clear Filters
+            </button>
+          )}
+        </div>
+
+        {showFilters && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-7 gap-3 p-4 bg-slate-800/40 rounded-xl border border-slate-700/50">
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Department</label>
+              <select className="input-field text-xs py-1.5" value={filterDept} onChange={e => setFilterDept(e.target.value)}>
+                <option value="">All</option>
+                {departments.map(d => <option key={d._id} value={d._id}>{d.code}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Year</label>
+              <select className="input-field text-xs py-1.5" value={filterYear} onChange={e => setFilterYear(e.target.value)}>
+                <option value="">All</option>
+                {['1','2','3','4'].map(y => <option key={y} value={y}>Year {y}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Semester</label>
+              <select className="input-field text-xs py-1.5" value={filterSem} onChange={e => setFilterSem(e.target.value)}>
+                <option value="">All</option>
+                <option value="1">Sem 1</option>
+                <option value="2">Sem 2</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
+              <select className="input-field text-xs py-1.5" value={filterSection} onChange={e => setFilterSection(e.target.value)}>
+                <option value="">All</option>
+                {['A','B','C','D','E'].map(s => <option key={s} value={s}>Sec {s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Subject</label>
+              <select className="input-field text-xs py-1.5" value={filterSubject} onChange={e => setFilterSubject(e.target.value)}>
+                <option value="">All</option>
+                {subjects.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Start Date From</label>
+              <input type="date" className="input-field text-xs py-1" value={filterDateFrom} onChange={e => setFilterDateFrom(e.target.value)} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Start Date To</label>
+              <input type="date" className="input-field text-xs py-1" value={filterDateTo} onChange={e => setFilterDateTo(e.target.value)} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Exams list */}

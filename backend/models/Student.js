@@ -34,6 +34,15 @@ const studentSchema = new mongoose.Schema({
   // Session management — stores the active session ID embedded in the JWT
   // When a student logs in on a new device, this is overwritten, invalidating the old session
   currentSessionId: { type: String, default: null },
+  // Admin audit log — tracks every field change made by admins
+  auditLog: [{
+    field: { type: String },
+    oldValue: { type: String },
+    newValue: { type: String },
+    changedBy: { type: String },  // Admin name
+    changedByRole: { type: String }, // Admin role
+    changedAt: { type: Date, default: Date.now },
+  }],
 }, { timestamps: true });
 
 

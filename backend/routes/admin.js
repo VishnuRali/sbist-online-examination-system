@@ -8,7 +8,8 @@ const {
   toggleStudentStatus, forceLogoutStudent,
   getDepartments, createDepartment, updateDepartment, deleteDepartment,
   getSubjects, createSubject, updateSubject, deleteSubject,
-  getDashboardStats, exportStudentsExcel, downloadCSVTemplate
+  getDashboardStats, exportStudentsExcel, downloadCSVTemplate,
+  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents
 } = require('../controllers/adminController');
 
 const multer = require('multer');
@@ -24,7 +25,8 @@ const {
   getSettings, saveSettings, testSettings,
   retrySingleEmail, retryAllFailedEmails,
   exportFailedEmailLogs,
-  previewRecipientCount
+  previewRecipientCount,
+  getLiveMonitorData
 } = require('../controllers/adminManagementController');
 
 // ==================== DASHBOARD ====================
@@ -36,6 +38,10 @@ router.get('/students/active', adminOnly, getActiveStudents);
 router.post('/students/:studentId/credentials', adminOnly, generateStudentCredentials);
 router.patch('/students/:studentId/toggle', adminOnly, toggleStudentStatus);
 router.post('/students/:studentId/force-logout', adminOnly, forceLogoutStudent);
+router.put('/students/:studentId', adminOnly, updateStudentProfile);
+router.get('/students/:studentId/audit-log', adminOnly, getStudentAuditLog);
+router.post('/students/bulk-update', adminOnly, bulkUpdateStudents);
+router.post('/students/export-selected', adminOnly, exportSelectedStudents);
 router.get('/export/students', adminOnly, exportStudentsExcel);
 
 // ==================== DEPARTMENTS ====================
@@ -72,6 +78,7 @@ router.post('/students/import-csv', adminOnly, upload.single('file'), importStud
 // ==================== MANUAL REMINDERS ====================
 router.post('/send-reminders', adminOnly, sendManualReminders);
 router.post('/send-reminders/preview-count', adminOnly, previewRecipientCount);
+router.get('/live-monitor', adminOnly, getLiveMonitorData);
 
 // ==================== MANUAL GOOGLE FORM SYNC ====================
 router.post('/sync-google-form', adminOnly, async (req, res) => {

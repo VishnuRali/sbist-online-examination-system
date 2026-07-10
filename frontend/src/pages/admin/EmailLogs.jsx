@@ -3,7 +3,7 @@ import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import {
   Mail, RefreshCw, CheckCircle, XCircle, Clock,
-  Send, X, ChevronDown, Download
+  Send, X, ChevronDown, Download, Filter, Tv
 } from 'lucide-react'
 
 const TYPE_LABELS = {
@@ -38,6 +38,19 @@ export default function EmailLogs() {
   const [filterStatus, setFilterStatus] = useState('')
   const [search, setSearch]           = useState('')
   const [debouncedSearch, setDebouncedSearch] = useState('')
+
+  // Advanced Filters
+  const [filterDept, setFilterDept]   = useState('')
+  const [filterYear, setFilterYear]   = useState('')
+  const [filterSem, setFilterSem]     = useState('')
+  const [filterSection, setFilterSection] = useState('')
+  const [filterExam, setFilterExam]   = useState('')
+  const [filterSubject, setFilterSubject] = useState('')
+  const [filterDateFrom, setFilterDateFrom] = useState('')
+  const [filterDateTo, setFilterDateTo] = useState('')
+  const [showFilters, setShowFilters] = useState(false)
+  
+  const [subjects, setSubjects] = useState([])
 
   // Server stats state
   const [totalEmails, setTotalEmails] = useState(0)
@@ -144,6 +157,14 @@ export default function EmailLogs() {
       const params = new URLSearchParams({ page, limit: 30 })
       if (filterType)   params.append('type',   filterType)
       if (filterStatus) params.append('status', filterStatus)
+      if (filterDept)   params.append('department', filterDept)
+      if (filterYear)   params.append('year', filterYear)
+      if (filterSem)    params.append('semester', filterSem)
+      if (filterSection) params.append('section', filterSection)
+      if (filterExam)   params.append('exam', filterExam)
+      if (filterSubject) params.append('subject', filterSubject)
+      if (filterDateFrom) params.append('dateFrom', filterDateFrom)
+      if (filterDateTo)   params.append('dateTo', filterDateTo)
       if (debouncedSearch.trim()) params.append('search', debouncedSearch.trim())
       const res = await api.get(`/admin/email-logs?${params}`)
       setLogs(res.data.logs   || [])
@@ -159,7 +180,7 @@ export default function EmailLogs() {
     } finally {
       setLoading(false)
     }
-  }, [page, filterType, filterStatus, debouncedSearch])
+  }, [page, filterType, filterStatus, filterDept, filterYear, filterSem, filterSection, filterExam, filterSubject, filterDateFrom, filterDateTo, debouncedSearch])
 
   useEffect(() => { fetchLogs() }, [fetchLogs])
 
@@ -178,6 +199,19 @@ export default function EmailLogs() {
       setDepartments(res.data.departments || [])
     } catch {}
   }
+
+  const fetchSubjects = async () => {
+    try {
+      const res = await api.get('/admin/subjects')
+      setSubjects(res.data.subjects || [])
+    } catch {}
+  }
+
+  useEffect(() => {
+    fetchExams()
+    fetchDepartments()
+    fetchSubjects()
+  }, [])
 
   const openSendModal = () => {
     fetchExams()
@@ -341,26 +375,113 @@ export default function EmailLogs() {
       </div>
 
       {/* Filters */}
-      <div className="flex flex-wrap gap-3">
-        <div className="relative flex-1 min-w-[200px]">
-          <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
-          <input
-            className="input-field pl-9 py-2"
-            placeholder="Search by email, name, Student ID..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
+      <div className="space-y-3">
+        <div className="flex gap-3 flex-wrap">
+          <div className="relative flex-1 min-w-[200px]">
+            <Mail size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+            <input
+              className="input-field pl-9 py-2"
+              placeholder="Search by email, name, Student ID..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && (
+              <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-200">
+                <X size={14} />
+              </button>
+            )}
+          </div>
+          <button onClick={() => setShowFilters(v => !v)}
+            className={`btn-secondary btn-sm flex items-center gap-2 text-xs ${
+              [filterDept, filterYear, filterSem, filterSection, filterExam, filterSubject, filterDateFrom, filterDateTo, filterType, filterStatus].filter(Boolean).length > 0 ? 'border-blue-500/50 text-blue-400' : ''
+            }`}>
+            <Filter size={14} />
+            Filters {[filterDept, filterYear, filterSem, filterSection, filterExam, filterSubject, filterDateFrom, filterDateTo, filterType, filterStatus].filter(Boolean).length > 0 && (
+              <span className="bg-blue-600 text-white text-[10px] px-1.5 py-0.5 rounded-full font-bold">
+                {[filterDept, filterYear, filterSem, filterSection, filterExam, filterSubject, filterDateFrom, filterDateTo, filterType, filterStatus].filter(Boolean).length}
+              </span>
+            )}
+          </button>
+          {[filterDept, filterYear, filterSem, filterSection, filterExam, filterSubject, filterDateFrom, filterDateTo, filterType, filterStatus, search].some(Boolean) && (
+            <button onClick={() => {
+              setSearch(''); setFilterType(''); setFilterStatus(''); setFilterDept(''); setFilterYear(''); setFilterSem(''); setFilterSection(''); setFilterExam(''); setFilterSubject(''); setFilterDateFrom(''); setFilterDateTo(''); setPage(1);
+            }} className="btn-secondary btn-sm text-xs text-red-400 border-red-500/30">
+              <X size={12} /> Clear
+            </button>
+          )}
         </div>
-        <select className="input-field w-auto py-2" value={filterType} onChange={e => { setFilterType(e.target.value); setPage(1) }}>
-          <option value="">All Types</option>
-          {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-        </select>
-        <select className="input-field w-auto py-2" value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }}>
-          <option value="">All Statuses</option>
-          <option value="sent">Sent</option>
-          <option value="failed">Failed</option>
-          <option value="pending">Pending</option>
-        </select>
+
+        {showFilters && (
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 p-4 bg-slate-800/40 rounded-xl border border-slate-700/50">
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Email Type</label>
+              <select className="input-field text-xs py-1.5" value={filterType} onChange={e => { setFilterType(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {Object.entries(TYPE_LABELS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Status</label>
+              <select className="input-field text-xs py-1.5" value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                <option value="sent">Sent</option>
+                <option value="failed">Failed</option>
+                <option value="pending">Pending</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Department</label>
+              <select className="input-field text-xs py-1.5" value={filterDept} onChange={e => { setFilterDept(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {departments.map(d => <option key={d._id} value={d._id}>{d.code}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Year</label>
+              <select className="input-field text-xs py-1.5" value={filterYear} onChange={e => { setFilterYear(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {['1','2','3','4'].map(y => <option key={y} value={y}>Year {y}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Semester</label>
+              <select className="input-field text-xs py-1.5" value={filterSem} onChange={e => { setFilterSem(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                <option value="1">Sem 1</option>
+                <option value="2">Sem 2</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
+              <select className="input-field text-xs py-1.5" value={filterSection} onChange={e => { setFilterSection(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {['A','B','C','D','E'].map(s => <option key={s} value={s}>Sec {s}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Exam</label>
+              <select className="input-field text-xs py-1.5" value={filterExam} onChange={e => { setFilterExam(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {exams.map(e => <option key={e._id} value={e._id}>{e.title}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Subject</label>
+              <select className="input-field text-xs py-1.5" value={filterSubject} onChange={e => { setFilterSubject(e.target.value); setPage(1) }}>
+                <option value="">All</option>
+                {subjects.map(s => <option key={s._id} value={s._id}>{s.name}</option>)}
+              </select>
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Date From</label>
+              <input type="date" className="input-field text-xs py-1" value={filterDateFrom} onChange={e => { setFilterDateFrom(e.target.value); setPage(1) }} />
+            </div>
+            <div>
+              <label className="block text-[10px] font-semibold text-slate-400 mb-1">Date To</label>
+              <input type="date" className="input-field text-xs py-1" value={filterDateTo} onChange={e => { setFilterDateTo(e.target.value); setPage(1) }} />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Table */}
