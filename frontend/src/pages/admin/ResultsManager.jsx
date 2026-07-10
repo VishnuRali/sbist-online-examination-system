@@ -341,7 +341,7 @@ export default function ResultsManager() {
                   const timeSpent = r.timeSpent ? `${Math.floor(r.timeSpent / 60)}m ${r.timeSpent % 60}s` : '—'
                   const displaySection = r.student?.section ? `Sec ${r.student.section}` : '—'
                   return (
-                    <tr key={idx => idx}>
+                    <tr key={r._id || i}>
                       <td>
                         <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-bold ${
                           r.rank === 1 ? 'bg-amber-500/30 text-amber-300' : r.rank === 2 ? 'bg-slate-400/20 text-slate-300' : r.rank === 3 ? 'bg-orange-700/30 text-orange-400' : 'bg-slate-700/50 text-slate-400'

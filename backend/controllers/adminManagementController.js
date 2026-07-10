@@ -357,6 +357,16 @@ const importStudentsCSV = async (req, res) => {
     const toCreate = []; // { sData, dept }
 
     for (const sData of students) {
+      const sectionVal = (sData.section || '').trim().toUpperCase();
+      if (!sectionVal) {
+        errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: 'Section is missing' });
+        continue;
+      }
+      if (!/^[A-Z]$/.test(sectionVal)) {
+        errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: `Invalid section value: "${sData.section}"` });
+        continue;
+      }
+
       const rawDeptName = (sData.departmentName || '').trim();
       if (!rawDeptName) {
         errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: 'Department name is missing in CSV' });
@@ -385,7 +395,7 @@ const importStudentsCSV = async (req, res) => {
 
       if (existingStudent) {
         // Update section, department, year, semester, email, phone (mobile)
-        existingStudent.section = sData.section || '';
+        existingStudent.section = sectionVal;
         existingStudent.department = dept._id;
         existingStudent.year = String(sData.year || '1');
         existingStudent.semester = String(sData.semester || '1');
@@ -399,6 +409,8 @@ const importStudentsCSV = async (req, res) => {
           errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: `Failed to update existing student: ${err.message}` });
         }
       } else {
+        // Store normalized sectionVal in sData for creation step
+        sData.section = sectionVal;
         toCreate.push({ sData, dept });
       }
     }
