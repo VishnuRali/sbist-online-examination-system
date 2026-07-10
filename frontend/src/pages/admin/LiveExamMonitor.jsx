@@ -31,6 +31,7 @@ export default function LiveExamMonitor() {
   })
   const [students, setStudents] = useState([])
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
   
@@ -40,17 +41,24 @@ export default function LiveExamMonitor() {
   useEffect(() => {
     api.get('/exam').then(res => {
       // Show draft/active/scheduled exams
-      setExams(res.data.exams || [])
-    }).catch(() => toast.error('Failed to load exams'))
+      setExams(Array.isArray(res.data?.exams) ? res.data.exams : [])
+    }).catch(() => {
+      toast.error('Failed to load exams')
+      setError('Unable to load live monitoring data.')
+    })
 
     api.get('/admin/departments').then(res => {
-      setDepartments(res.data.departments || [])
-    }).catch(() => toast.error('Failed to load departments'))
+      setDepartments(Array.isArray(res.data?.departments) ? res.data.departments : [])
+    }).catch(() => {
+      toast.error('Failed to load departments')
+      setError('Unable to load live monitoring data.')
+    })
   }, [])
 
   // Load monitoring data
   const loadData = async (showLoadingIndicator = false) => {
     if (showLoadingIndicator) setLoading(true)
+    setError(null)
     try {
       const res = await api.get('/admin/live-monitor', {
         params: {
@@ -61,7 +69,9 @@ export default function LiveExamMonitor() {
           section: filterSection
         }
       })
-      setStats(res.data.stats || {
+      
+      const responseData = res.data || {}
+      setStats(responseData.stats || {
         totalStudents: 0,
         waiting: 0,
         writing: 0,
@@ -70,10 +80,11 @@ export default function LiveExamMonitor() {
         absent: 0,
         disqualified: 0
       })
-      setStudents(res.data.students || [])
+      setStudents(Array.isArray(responseData.students) ? responseData.students : [])
       setLastUpdated(new Date())
-    } catch {
+    } catch (err) {
       toast.error('Failed to update live monitor data')
+      setError('Unable to load live monitoring data.')
     } finally {
       if (showLoadingIndicator) setLoading(false)
     }
@@ -127,6 +138,53 @@ export default function LiveExamMonitor() {
       default:
         return 'bg-slate-800/80 text-slate-300 border border-slate-700/50'
     }
+  }
+
+  if (error) {
+    return (
+      <div className="space-y-6 fade-in">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-100 font-['Outfit']">Live Exam Monitoring</h1>
+        </div>
+        <div className="glass-card p-12 text-center border-red-500/20 bg-red-500/5">
+          <AlertTriangle size={40} className="text-red-400 mx-auto mb-4 animate-bounce" />
+          <p className="text-red-400 text-lg font-medium">{error}</p>
+          <p className="text-slate-500 text-sm mb-6">Unable to load live monitoring data.</p>
+          <button onClick={() => loadData(true)} className="btn-primary btn-sm flex items-center gap-2 mx-auto">
+            <RefreshCw size={14} /> Retry
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  if (loading) {
+    return (
+      <div className="space-y-6 fade-in">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-100 font-['Outfit']">Live Exam Monitoring</h1>
+        </div>
+        <div className="flex flex-col items-center justify-center h-64 bg-slate-800/20 rounded-2xl border border-slate-700/30">
+          <div className="spinner mb-4"></div>
+          <p className="text-slate-400 text-sm">Loading live examination data...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (exams.length === 0) {
+    return (
+      <div className="space-y-6 fade-in">
+        <div className="flex items-center justify-between">
+          <h1 className="text-2xl font-bold text-slate-100 font-['Outfit']">Live Exam Monitoring</h1>
+        </div>
+        <div className="glass-card p-12 text-center">
+          <Tv size={40} className="text-slate-600 mx-auto mb-4" />
+          <p className="text-slate-400 text-lg font-medium">No active examinations right now.</p>
+          <p className="text-slate-500 text-sm">Create and schedule exams to monitor live student activity.</p>
+        </div>
+      </div>
+    )
   }
 
   return (
@@ -189,7 +247,7 @@ export default function LiveExamMonitor() {
         </div>
         <div>
           <label className="block text-xs font-semibold text-slate-400 mb-1">Semester</label>
-          <select value={filterSemester} onChange={e => setFilterSem(e.target.value)} className="input-field py-2 text-xs">
+          <select value={filterSem} onChange={e => setFilterSem(e.target.value)} className="input-field py-2 text-xs">
             <option value="">All Semesters</option>
             <option value="1">Semester 1</option>
             <option value="2">Semester 2</option>

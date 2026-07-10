@@ -20,6 +20,7 @@ import AdminManager from './pages/admin/AdminManager'
 import EmailLogs from './pages/admin/EmailLogs'
 import MailSettings from './pages/admin/MailSettings'
 import LiveExamMonitor from './pages/admin/LiveExamMonitor'
+import ErrorBoundary from './components/ErrorBoundary'
 
 // Student pages
 import StudentLayout from './layouts/StudentLayout'
@@ -98,7 +99,7 @@ function App() {
         <Route path="exams/:examId/questions" element={<QuestionManager />} />
         <Route path="students" element={<StudentManager />} />
         <Route path="results" element={<ResultsManager />} />
-        <Route path="live-monitor" element={<LiveExamMonitor />} />
+        <Route path="live-monitor" element={<ErrorBoundary><LiveExamMonitor /></ErrorBoundary>} />
         <Route path="departments" element={<DepartmentManager />} />
         <Route path="subjects" element={<SubjectManager />} />
         <Route path="admins" element={<AdminManager />} />
