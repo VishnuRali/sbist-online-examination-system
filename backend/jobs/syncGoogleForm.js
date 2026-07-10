@@ -1,4 +1,4 @@
-const cron = require('node-cron');
+﻿const cron = require('node-cron');
 const Student = require('../models/Student');
 const Department = require('../models/Department');
 const { fetchFormResponses, markRowAsSynced, isGoogleConfigured } = require('../utils/googleSheets');
@@ -101,7 +101,7 @@ const processFormResponses = async () => {
 
       // ── 7. Generate unique Student ID ───────────────────
       const currentYear = new Date().getFullYear();
-      const prefix = `SBIST${currentYear}`;
+      const prefix = `SBIT${currentYear}`;
       let sequence = (await Student.countDocuments({ studentId: { $regex: new RegExp(`^${prefix}`) } })) + 1;
       let studentId;
       let isUnique = false;

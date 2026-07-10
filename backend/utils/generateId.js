@@ -1,10 +1,10 @@
-/**
- * Generate unique Student ID: SBIST + YEAR + DEPT_CODE + RANDOM
- * Example: SBIST2024CS001
+﻿/**
+ * Generate unique Student ID: SBIT + YEAR + DEPT_CODE + RANDOM
+ * Example: SBIT2024CS001
  */
 const generateStudentId = (departmentCode, year) => {
   const rand = Math.floor(Math.random() * 9000) + 1000;
-  return `SBIST${year}${departmentCode.toUpperCase()}${rand}`;
+  return `SBIT${year}${departmentCode.toUpperCase()}${rand}`;
 };
 
 /**

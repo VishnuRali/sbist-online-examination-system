@@ -6,7 +6,8 @@ import {
   Users, Search, RefreshCw, Key, Power, LogOut, Download, CloudDownload,
   X, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Upload, Mail, MailX,
   UserCheck, UserX, Edit3, ClipboardList, ChevronLeft, ChevronRight,
-  GraduationCap, TrendingUp, ToggleLeft, ToggleRight, Filter, Shield
+  GraduationCap, TrendingUp, ToggleLeft, ToggleRight, Filter, Shield,
+  Trash2, UserPlus
 } from 'lucide-react'
 
 // ─── Debounce hook ───────────────────────────────────────────
@@ -22,6 +23,7 @@ function useDebounce(value, delay = 500) {
 // ─── Edit Student Modal ───────────────────────────────────────
 function EditStudentModal({ student, departments, onClose, onSaved }) {
   const [form, setForm] = useState({
+    name: student.name || '',
     department: student.department?._id || '',
     year: student.year || '1',
     semester: student.semester || '1',
@@ -78,6 +80,9 @@ function EditStudentModal({ student, departments, onClose, onSaved }) {
 
         <div className="grid grid-cols-2 gap-4 mb-4">
           <div className="col-span-2">
+            {field('Student Name', 'name')}
+          </div>
+          <div className="col-span-2">
             <label className="block text-xs font-medium text-slate-400 mb-1">Department</label>
             <select value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))} className="input-field text-sm">
               <option value="">Select Department</option>
@@ -117,6 +122,113 @@ function EditStudentModal({ student, departments, onClose, onSaved }) {
           <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
           <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-2">
             {saving ? <><div className="spinner w-4 h-4" />Saving...</> : 'Save Changes'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ─── Add Student Modal ────────────────────────────────────────
+function AddStudentModal({ departments, onClose, onSaved, onShowCredentials }) {
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    rollNumber: '',
+    mobile: '',
+    department: '',
+    year: '1',
+    semester: '1',
+    section: '',
+  })
+  const [saving, setSaving] = useState(false)
+
+  const handleSave = async () => {
+    if (!form.name.trim() || !form.email.trim() || !form.rollNumber.trim() || !form.mobile.trim() || !form.department || !form.year || !form.semester || !form.section.trim()) {
+      toast.error('All fields are required')
+      return
+    }
+    setSaving(true)
+    try {
+      const res = await api.post('/admin/students', form)
+      toast.success(res.data.message || 'Student manually created successfully.')
+      if (res.data.student && res.data.plainPassword) {
+        onShowCredentials({
+          studentId: res.data.student.studentId,
+          password: res.data.plainPassword
+        })
+      }
+      onSaved()
+      onClose()
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to manually register student')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const field = (label, key, type = 'text', opts = null) => (
+    <div key={key}>
+      <label className="block text-xs font-medium text-slate-400 mb-1">{label}</label>
+      {opts ? (
+        <select value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} className="input-field text-sm">
+          {opts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
+      ) : (
+        <input type={type} value={form[key]} onChange={e => setForm(f => ({ ...f, [key]: e.target.value }))} className="input-field text-sm" placeholder={label} />
+      )}
+    </div>
+  )
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+      <div className="glass-card w-full max-w-lg p-6 slide-up">
+        <div className="flex items-center justify-between mb-5">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-blue-500/20 rounded-xl flex items-center justify-center border border-blue-500/30">
+              <UserPlus size={18} className="text-blue-400" />
+            </div>
+            <div>
+              <h2 className="text-lg font-bold text-slate-100 font-['Outfit']">Add Student Manually</h2>
+              <p className="text-xs text-slate-400">Register a new student and generate their credentials</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="btn-icon text-slate-400"><X size={18} /></button>
+        </div>
+
+        <div className="grid grid-cols-2 gap-4 mb-4">
+          <div className="col-span-2">
+            {field('Student Name', 'name')}
+          </div>
+          <div className="col-span-2">
+            <label className="block text-xs font-medium text-slate-400 mb-1">Department</label>
+            <select value={form.department} onChange={e => setForm(f => ({ ...f, department: e.target.value }))} className="input-field text-sm">
+              <option value="">Select Department</option>
+              {departments.map(d => <option key={d._id} value={d._id}>{d.name} ({d.code})</option>)}
+            </select>
+          </div>
+          {field('Year', 'year', 'text', [
+            { value: '1', label: 'Year 1' }, { value: '2', label: 'Year 2' },
+            { value: '3', label: 'Year 3' }, { value: '4', label: 'Year 4' },
+          ])}
+          {field('Semester', 'semester', 'text', [
+            { value: '1', label: 'Semester 1' }, { value: '2', label: 'Semester 2' },
+          ])}
+          {field('Section', 'section', 'text', [
+            { value: '', label: '— Select —' },
+            { value: 'A', label: 'Section A' }, { value: 'B', label: 'Section B' },
+            { value: 'C', label: 'Section C' }, { value: 'D', label: 'Section D' },
+            { value: 'E', label: 'Section E' },
+          ])}
+          {field('Roll Number', 'rollNumber')}
+          {field('Email', 'email', 'email')}
+          {field('Mobile', 'mobile', 'tel')}
+        </div>
+
+        <div className="flex gap-3">
+          <button onClick={onClose} className="btn-secondary flex-1">Cancel</button>
+          <button onClick={handleSave} disabled={saving} className="btn-primary flex-1 flex items-center justify-center gap-2">
+            {saving ? <><div className="spinner w-4 h-4" />Registering...</> : 'Register Student'}
           </button>
         </div>
       </div>
@@ -319,6 +431,7 @@ export default function StudentManager() {
   // Modals
   const [editingStudent, setEditingStudent] = useState(null)
   const [auditStudent, setAuditStudent] = useState(null)
+  const [showAddModal, setShowAddModal] = useState(false)
 
   const LIMIT = 15
   const debouncedSearch = useDebounce(search, 400)
@@ -374,6 +487,19 @@ export default function StudentManager() {
       load()
     } catch {
       toast.error('Failed')
+    }
+  }
+
+  const handleDeleteStudent = async (student) => {
+    if (!window.confirm(`Are you sure you want to delete student ${student.name}? This action cannot be undone.`)) {
+      return
+    }
+    try {
+      const res = await api.delete(`/admin/students/${student._id}`)
+      toast.success(res.data.message || 'Student deleted successfully')
+      load()
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to delete student')
     }
   }
 
@@ -494,6 +620,9 @@ export default function StudentManager() {
             {syncingGForm ? <><div className="spinner w-3 h-3" /> Syncing...</> : <><RefreshCw size={14} /> Sync GForm</>}
           </button>
           <button onClick={exportStudents} className="btn-success btn-sm flex items-center gap-2 text-xs"><Download size={14} /> Export All</button>
+          <button onClick={() => setShowAddModal(true)} className="btn-primary btn-sm flex items-center gap-2 text-xs">
+            <UserPlus size={14} /> Add Student Manually
+          </button>
         </div>
       </div>
 
@@ -744,6 +873,7 @@ export default function StudentManager() {
                       <button onClick={() => setAuditStudent(s)} title="Audit Log" className="btn-icon text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"><ClipboardList size={14} /></button>
                       <button onClick={() => resetCredentials(s._id)} title="Reset Password" className="btn-icon text-slate-400 hover:text-yellow-400 hover:bg-yellow-500/10"><Key size={14} /></button>
                       <button onClick={() => toggleStatus(s._id)} title={s.isActive ? 'Deactivate' : 'Activate'} className="btn-icon text-slate-400 hover:text-blue-400 hover:bg-blue-500/10"><Power size={14} /></button>
+                      <button onClick={() => handleDeleteStudent(s)} title="Delete Student" className="btn-icon text-slate-400 hover:text-red-400 hover:bg-red-500/10"><Trash2 size={14} /></button>
                       {s.isLoggedIn && (
                         <button onClick={() => forceLogout(s._id)} title="Force Logout" className="btn-icon text-slate-400 hover:text-red-400 hover:bg-red-500/10"><LogOut size={14} /></button>
                       )}
@@ -839,6 +969,16 @@ export default function StudentManager() {
           departments={departments}
           onClose={() => setEditingStudent(null)}
           onSaved={load}
+        />
+      )}
+
+      {/* ── Add Student Modal ── */}
+      {showAddModal && (
+        <AddStudentModal
+          departments={departments}
+          onClose={() => setShowAddModal(false)}
+          onSaved={load}
+          onShowCredentials={setCredModal}
         />
       )}
 

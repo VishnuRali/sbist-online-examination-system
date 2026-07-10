@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+﻿import { useState, useEffect, useCallback } from 'react'
 import api from '../../utils/api'
 import { useAuth } from '../../context/AuthContext'
 import toast from 'react-hot-toast'
@@ -275,7 +275,7 @@ export default function AdminManager() {
               {[
                 { label: 'Full Name *', key: 'name', type: 'text', placeholder: 'e.g., Dr. John Smith' },
                 { label: 'Employee ID *', key: 'employeeId', type: 'text', placeholder: 'e.g., EMP001' },
-                { label: 'Email *', key: 'email', type: 'email', placeholder: 'admin@sbist.edu', col: 'full' },
+                { label: 'Email *', key: 'email', type: 'email', placeholder: 'admin@sbit.edu', col: 'full' },
                 { label: 'Mobile Number *', key: 'mobile', type: 'tel', placeholder: '9876543210' },
               ].map(f => (
                 <div key={f.key} className={f.col === 'full' ? 'col-span-2' : ''}>

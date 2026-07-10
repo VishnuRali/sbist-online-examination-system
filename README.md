@@ -1,6 +1,6 @@
-# 🎓 SBIST Online Examination System
+﻿# 🎓 SBIT Online Examination System
 
-A full-stack, production-ready online examination platform built for **Swarna Bharathi Institute of Science and Technology (SBIST)**. Supports automated student registration via Google Forms, secure proctored exams with violation tracking, real-time admin dashboards, and automated credential delivery via email.
+A full-stack, production-ready online examination platform built for **Swarna Bharathi Institute of Science and Technology (SBIT)**. Supports automated student registration via Google Forms, secure proctored exams with violation tracking, real-time admin dashboards, and automated credential delivery via email.
 
 ---
 
@@ -50,7 +50,7 @@ A full-stack, production-ready online examination platform built for **Swarna Bh
 ## 📁 Project Structure
 
 ```
-sbist-online-examination-system/
+sbit-online-examination-system/
 ├── backend/                    # Express API server
 │   ├── controllers/            # Route handlers
 │   ├── jobs/                   # Cron jobs (Google Form sync, email reminders)
@@ -88,8 +88,8 @@ sbist-online-examination-system/
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/sbist-online-examination-system.git
-cd sbist-online-examination-system
+git clone https://github.com/your-username/sbit-online-examination-system.git
+cd sbit-online-examination-system
 ```
 
 ### 2. Configure Backend
@@ -102,7 +102,7 @@ cp .env.example .env
 Edit `backend/.env` with your values:
 
 ```env
-MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.xxxxx.mongodb.net/sbist_exam
+MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.xxxxx.mongodb.net/sbit_exam
 JWT_SECRET=your_strong_random_secret
 SUPER_ADMIN_EMAIL=admin@yourdomain.edu
 SUPER_ADMIN_PASSWORD=YourSecurePassword123!
@@ -171,7 +171,7 @@ npm run frontend  # Vite dev server on port 5173
 
 ### Google Form Setup
 
-Create a Google Form titled **"SBIST Online Examination Registration"** with these fields in order:
+Create a Google Form titled **"SBIT Online Examination Registration"** with these fields in order:
 
 | Column | Field | Type |
 |--------|-------|------|
@@ -281,10 +281,10 @@ A suite of production-ready features has been added under this update:
 ## 📄 License
 
 This project is proprietary software developed for **Swarna Bharathi Institute of Science and Technology**.  
-All rights reserved © 2025 SBIST.
+All rights reserved © 2025 SBIT.
 
 ---
 
 ## 👨‍💻 Developed By
 
-Built with ❤️ for the SBIST Examination Department.
+Built with ❤️ for the SBIT Examination Department.

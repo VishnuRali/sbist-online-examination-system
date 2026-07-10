@@ -1,3 +1,6 @@
+﻿const path = require('path');
+require('dotenv').config({ path: path.join(__dirname, '../.env') });
+
 const nodemailer = require('nodemailer');
 const EmailLog = require('../models/EmailLog');
 const Settings = require('../models/Settings');
@@ -5,21 +8,40 @@ const Settings = require('../models/Settings');
 // Helper to load Gmail credentials from DB or Env
 const getGmailConfig = async () => {
   const settings = await Settings.findOne();
-  const user = settings?.gmailUser || process.env.SMTP_USER || process.env.GMAIL_USER;
-  const pass = settings?.gmailAppPassword || process.env.SMTP_PASS || process.env.GMAIL_APP_PASSWORD;
+  
+  // 1. Saved active Mail Settings from DB
+  let user = settings?.gmailUser;
+  let pass = settings?.gmailAppPassword;
+
+  const isDbConfigured = user && pass &&
+    !user.includes('your_gmail') &&
+    !pass.includes('your_16_char') &&
+    user.trim() !== '' &&
+    pass.trim() !== '';
+
+  if (!isDbConfigured) {
+    // 2. Env variables
+    user = process.env.SMTP_USER || process.env.EMAIL_USER || process.env.GMAIL_USER;
+    pass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD;
+  }
+
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const port = Number(process.env.SMTP_PORT || 465);
   const secure = process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true;
   const portalUrl = settings?.examPortalUrl || process.env.EXAM_URL || 'http://localhost:5173';
+
   return { user, pass, host, port, secure, portalUrl };
 };
 
 // Create transporter
-const createTransporter = (user, pass) => {
+const createTransporter = (user, pass, options = {}) => {
+  const host = options.host || process.env.SMTP_HOST || 'smtp.gmail.com';
+  const port = Number(options.port || process.env.SMTP_PORT || 465);
+  const secure = options.secure !== undefined
+    ? options.secure
+    : (process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true);
+
   const isDev = process.env.NODE_ENV === 'development';
-  const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(process.env.SMTP_PORT || 465);
-  const secure = process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true;
 
   const mailOptions = {
     host,
@@ -27,23 +49,34 @@ const createTransporter = (user, pass) => {
     secure,
     auth: { user, pass },
     tls: {
-      // Allow self-signed certs in development (e.g. antivirus/local proxy intercepting TLS)
       rejectUnauthorized: !isDev
     }
   };
 
-  // Add verbose debugging logs in development console
   if (isDev) {
     mailOptions.debug = true;
     mailOptions.logger = true;
   }
+
+  // Safe diagnostic logs (never logging password)
+  const isConfigured = !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
+  const maskedUsername = user ? (user.includes('@')
+    ? user.split('@')[0].slice(0, 3) + '***@' + user.split('@')[1]
+    : user.slice(0, 3) + '***') : 'N/A';
+
+  console.log('[SMTP DIAGNOSTICS]');
+  console.log('  SMTP Configured:', isConfigured);
+  console.log('  Host:', host);
+  console.log('  Port:', port);
+  console.log('  Secure Mode:', secure);
+  console.log('  Username (Masked):', maskedUsername);
 
   return nodemailer.createTransport(mailOptions);
 };
 
 const isEmailConfigured = async () => {
   const { user, pass } = await getGmailConfig();
-  return !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char'));
+  return !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
 };
 
 // ==================== EMAIL TEMPLATES ====================
@@ -91,7 +124,7 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
   <div class="header">
     <h1>🎓 SWARNA BHARATHI INSTITUTE</h1>
     <p>OF SCIENCE AND TECHNOLOGY</p>
-    <p style="margin-top:14px; font-size:16px; font-weight:bold;">SBIST Online Examination System</p>
+    <p style="margin-top:14px; font-size:16px; font-weight:bold;">SBIT Online Examination System</p>
   </div>
   <div class="body">
     <p class="greeting">Dear <strong>${student.name}</strong>,</p>
@@ -179,13 +212,14 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   const urgency   = type === 'reminder_30m' ? '🔴' : type === 'reminder_1h' ? '🟡' : '🟢';
   const alertColor = type === 'reminder_30m' ? '#dc2626' : type === 'reminder_1h' ? '#d97706' : '#059669';
 
-  const startDate = new Date(exam.startTime);
-  const examDate  = startDate.toLocaleDateString('en-IN', {
-    weekday: 'long', year: 'numeric', month: 'long', day: 'numeric',
-  });
-  const examTime = startDate.toLocaleTimeString('en-IN', {
-    hour: '2-digit', minute: '2-digit', hour12: true,
-  });
+  const { formatEmailDate, formatTime } = require('./dateFormatter');
+
+  const examDate = formatEmailDate(exam.startTime);
+  const examTime = formatTime(exam.startTime);
+
+  const beginsLabel = (label === 'Soon') ? 'Soon' : `in ${label}`;
+  const beginsStrongLabel = (label === 'Soon') ? 'soon' : `in <strong>${label}</strong>`;
+  const countdownLabel = (label === 'Soon') ? 'soon' : `in ${label}`;
 
   let subjectName = '';
   if (exam.examType === 'multi' && exam.subjects && exam.subjects.length > 0) {
@@ -216,25 +250,25 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   <!-- Header -->
   <div style="background:linear-gradient(135deg,#1e3a8a,#4f46e5);color:white;padding:28px 24px;text-align:center;">
     <p style="margin:0;font-size:12px;letter-spacing:2px;opacity:0.8;text-transform:uppercase;">Swarna Bharathi Institute of Science and Technology</p>
-    <h1 style="margin:8px 0 0;font-size:20px;font-weight:800;">SBIST Online Examination</h1>
+    <h1 style="margin:8px 0 0;font-size:20px;font-weight:800;">SBIT Online Examination</h1>
   </div>
 
   <!-- Alert Banner -->
   <div style="background:${alertColor};color:white;text-align:center;padding:14px;font-weight:bold;font-size:17px;letter-spacing:0.5px;">
-    ${urgency} EXAM REMINDER — Starts in ${label}
+    ${urgency} EXAM REMINDER — Starts ${beginsLabel}
   </div>
 
   <!-- Body -->
   <div style="padding:28px 24px;">
     <p style="font-size:16px;color:#1e293b;margin:0 0 6px;">Dear <strong>${student.name}</strong>,</p>
     <p style="color:#475569;font-size:14px;margin:0 0 20px;">
-      Your upcoming examination begins in <strong>${label}</strong>. Please review the details below and log in on time.
+      Your upcoming examination begins ${beginsStrongLabel}. Please review the details below and log in on time.
     </p>
 
     <!-- Countdown box -->
     <div style="background:#fefce8;border:1px solid #fde68a;border-radius:10px;padding:14px;text-align:center;margin-bottom:20px;">
       <p style="margin:0;font-size:15px;font-weight:700;color:#92400e;">
-        ⏰ Your examination begins in ${label}. Log in now and be prepared.
+        ⏰ Your examination begins ${countdownLabel.toLowerCase()}. Log in now and be prepared.
       </p>
     </div>
 
@@ -313,14 +347,14 @@ const parseSmtpError = (error) => {
 // ==================== SEND FUNCTIONS ====================
 
 const sendWelcomeEmail = async (student, exam = null) => {
-  const { user, pass, portalUrl } = await getGmailConfig();
+  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
 
   const log = new EmailLog({
     to: student.email,
     studentName: student.name,
     studentId: student.studentId,
     type: 'welcome',
-    subject: 'SBIST Online Examination — Your Account Details',
+    subject: 'SBIT Online Examination — Your Account Details',
     exam: exam ? exam._id : null,
     student: student._id,
     attemptedAt: new Date(),
@@ -340,11 +374,12 @@ const sendWelcomeEmail = async (student, exam = null) => {
   }
 
   try {
-    const transporter = createTransporter(user, pass);
+    const transporter = createTransporter(user, pass, { host, port, secure });
+    await transporter.verify();
     await transporter.sendMail({
-      from: `"SBIST Examinations" <${user}>`,
+      from: `"SBIT Examinations" <${user}>`,
       to: student.email,
-      subject: 'SBIST Online Examination — Your Account Details & Login Credentials',
+      subject: 'SBIT Online Examination — Your Account Details & Login Credentials',
       html: getWelcomeEmailHTML(student, portalUrl),
     });
 
@@ -365,7 +400,7 @@ const sendWelcomeEmail = async (student, exam = null) => {
 };
 
 const sendReminderEmail = async (student, exam, type) => {
-  const { user, pass, portalUrl } = await getGmailConfig();
+  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
   const typeLabel = {
     reminder_24h: '24 Hours',
     reminder_1h:  '1 Hour',
@@ -377,7 +412,7 @@ const sendReminderEmail = async (student, exam, type) => {
     studentName: student.name,
     studentId: student.studentId,
     type,
-    subject: `SBIST Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
+    subject: `SBIT Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
     exam: exam._id,
     student: student._id,
     attemptedAt: new Date(),
@@ -396,11 +431,12 @@ const sendReminderEmail = async (student, exam, type) => {
   }
 
   try {
-    const transporter = createTransporter(user, pass);
+    const transporter = createTransporter(user, pass, { host, port, secure });
+    await transporter.verify();
     await transporter.sendMail({
-      from: `"SBIST Examinations" <${user}>`,
+      from: `"SBIT Examinations" <${user}>`,
       to: student.email,
-      subject: `SBIST Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
+      subject: `SBIT Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
       html: getReminderEmailHTML(student, exam, type, portalUrl),
     });
 
@@ -421,7 +457,15 @@ const sendReminderEmail = async (student, exam, type) => {
 const retryEmailLog = async (log) => {
   const Student = require('../models/Student');
   const Exam = require('../models/Exam');
-  const { user, pass, portalUrl } = await getGmailConfig();
+  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
+
+  // ONLY retry if status is failed
+  if (log.status !== 'failed') {
+    return { success: false, error: 'Email log is not in failed status' };
+  }
+
+  log.status = 'pending';
+  await log.save();
 
   if (!user || !pass) {
     log.status = 'failed';
@@ -458,9 +502,10 @@ const retryEmailLog = async (log) => {
       html = getReminderEmailHTML(student, exam, log.type, portalUrl);
     }
 
-    const transporter = createTransporter(user, pass);
+    const transporter = createTransporter(user, pass, { host, port, secure });
+    await transporter.verify();
     await transporter.sendMail({
-      from: `"SBIST Examinations" <${user}>`,
+      from: `"SBIT Examinations" <${user}>`,
       to: log.to,
       subject: log.subject,
       html,
@@ -516,14 +561,14 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
     if (recipientEmail) {
       const portalConfig = await getGmailConfig();
       const info = await transporter.sendMail({
-        from: `"SBIST SMTP Test" <${testUser}>`,
+        from: `"SBIT SMTP Test" <${testUser}>`,
         to: recipientEmail,
-        subject: 'SBIST Exam Portal — SMTP Integration Test',
-        text: 'This is a verification email from your SBIST Exam Portal. If you received this, your SMTP email connection is fully working!',
+        subject: 'SBIT Exam Portal — SMTP Integration Test',
+        text: 'This is a verification email from your SBIT Exam Portal. If you received this, your SMTP email connection is fully working!',
         html: `
           <div style="font-family: sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 500px; margin: auto; background-color: #ffffff;">
             <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">🎉 SMTP Connection Successful!</h2>
-            <p style="color: #334155; font-size: 14px; line-height: 1.5;">This is an automated verification email from the <strong>SBIST Online Examination Portal</strong>.</p>
+            <p style="color: #334155; font-size: 14px; line-height: 1.5;">This is an automated verification email from the <strong>SBIT Online Examination Portal</strong>.</p>
             <p style="color: #475569; font-size: 13px; line-height: 1.5; background-color: #f8fafc; padding: 12px; border-radius: 8px;">
               Your SMTP credentials have been successfully authenticated. The system is now ready to send automated welcome messages and examination reminders.
             </p>
@@ -564,21 +609,22 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
 };
 
 const sendOtpEmail = async (email, name, otp) => {
-  const { user, pass } = await getGmailConfig();
+  const { user, pass, host, port, secure } = await getGmailConfig();
   if (!user || !pass) {
     return { success: false, reason: 'SMTP credentials not configured' };
   }
   try {
-    const transporter = createTransporter(user, pass);
+    const transporter = createTransporter(user, pass, { host, port, secure });
+    await transporter.verify();
     await transporter.sendMail({
-      from: `"SBIST Examinations" <${user}>`,
+      from: `"SBIT Examinations" <${user}>`,
       to: email,
-      subject: 'SBIST Portal — Forgot Password OTP',
+      subject: 'SBIT Portal — Forgot Password OTP',
       html: `
         <div style="font-family: sans-serif; padding: 24px; max-width: 500px; margin: auto; border: 1px solid #e2e8f0; border-radius: 12px; background-color: #ffffff;">
           <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">Forgot Password OTP</h2>
           <p style="color: #334155; font-size: 14px;">Dear ${name},</p>
-          <p style="color: #334155; font-size: 14px;">You requested a password reset for your SBIST Exam Portal account.</p>
+          <p style="color: #334155; font-size: 14px;">You requested a password reset for your SBIT Exam Portal account.</p>
           <div style="background-color: #f8fafc; text-align: center; padding: 16px; border-radius: 8px; margin: 20px 0;">
             <span style="font-size: 28px; font-weight: bold; color: #1e3a8a; letter-spacing: 4px;">${otp}</span>
           </div>

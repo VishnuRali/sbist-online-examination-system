@@ -12,6 +12,7 @@ const { generatePassword } = require('../utils/generateId');
 const { parseStudentsFromCSV } = require('../utils/csvParser');
 const { sendWelcomeEmail, testSmtpConnection } = require('../utils/emailService');
 const { testSheetsConnection } = require('../utils/googleSheets');
+const { formatDateTime } = require('../utils/dateFormatter');
 
 // ==================== ADMIN CRUD (Super Admin only) ====================
 
@@ -214,7 +215,7 @@ const getEmailLogs = async (req, res) => {
     if (exam) query.exam = exam;
     if (subject) {
       const Exam = require('../models/Exam');
-      const matchingExams = await Exam.find({ subject }).select('_id');
+      const matchingExams = await Exam.find({ subject }).select('_id').lean();
       query.exam = { $in: matchingExams.map(e => e._id) };
     }
     if (dateFrom || dateTo) {
@@ -249,14 +250,38 @@ const getEmailLogs = async (req, res) => {
     const statsQuery = { ...query };
     delete statsQuery.status;
 
-    const [total, totalEmails, sentCount, failedCount, pendingCount, retriedCount] = await Promise.all([
-      EmailLog.countDocuments(query),
-      EmailLog.countDocuments(statsQuery),
-      EmailLog.countDocuments({ ...statsQuery, status: 'sent' }),
-      EmailLog.countDocuments({ ...statsQuery, status: 'failed' }),
-      EmailLog.countDocuments({ ...statsQuery, status: 'pending' }),
-      EmailLog.countDocuments({ ...statsQuery, retried: true }),
+    // High performance aggregation for stats counts
+    const statsResult = await EmailLog.aggregate([
+      { $match: statsQuery },
+      {
+        $group: {
+          _id: null,
+          totalEmails: { $sum: 1 },
+          sentCount: { $sum: { $cond: [{ $eq: ['$status', 'sent'] }, 1, 0] } },
+          failedCount: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+          pendingCount: { $sum: { $cond: [{ $eq: ['$status', 'pending'] }, 1, 0] } },
+          retriedCount: { $sum: { $cond: [{ $eq: ['$retried', true] }, 1, 0] } }
+        }
+      }
     ]);
+
+    const stats = statsResult[0] || {
+      totalEmails: 0,
+      sentCount: 0,
+      failedCount: 0,
+      pendingCount: 0,
+      retriedCount: 0
+    };
+
+    let total = 0;
+    if (status) {
+      if (status === 'sent') total = stats.sentCount;
+      else if (status === 'failed') total = stats.failedCount;
+      else if (status === 'pending') total = stats.pendingCount;
+      else total = await EmailLog.countDocuments(query);
+    } else {
+      total = stats.totalEmails;
+    }
 
     const logs = await EmailLog.find(query)
       .sort({ createdAt: -1 })
@@ -264,7 +289,8 @@ const getEmailLogs = async (req, res) => {
       .limit(parseInt(limit))
       .populate('exam', 'title')
       .populate('student', 'name studentId rollNumber')
-      .populate('department', 'name code');
+      .populate('department', 'name code')
+      .lean();
 
     res.json({
       success: true,
@@ -272,11 +298,11 @@ const getEmailLogs = async (req, res) => {
       total,
       page: parseInt(page),
       pages: Math.ceil(total / limit),
-      totalEmails,
-      sentCount,
-      failedCount,
-      pendingCount,
-      retriedCount
+      totalEmails: stats.totalEmails,
+      sentCount: stats.sentCount,
+      failedCount: stats.failedCount,
+      pendingCount: stats.pendingCount,
+      retriedCount: stats.retriedCount
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -417,7 +443,7 @@ const importStudentsCSV = async (req, res) => {
 
     // ── Step 3: Generate sequential student IDs for new creations ────────────────────────────
     const currentYear = new Date().getFullYear();
-    const prefix = `SBIST${currentYear}`;
+    const prefix = `SBIT${currentYear}`;
     let sequence = 1;
 
     if (toCreate.length > 0) {
@@ -553,7 +579,7 @@ const sendManualReminders = async (req, res) => {
       return res.status(400).json({ success: false, message: 'targetValue (studentId) is required for target=student' });
     }
 
-    const studentQuery = buildStudentEligibilityQuery(exam, req.body);
+    const studentQuery = await buildStudentEligibilityQuery(exam, req.body);
 
     console.log('[DEBUG] Send Reminders Requested filters:', req.body);
     console.log('[DEBUG] Send Reminders Mongo query:', JSON.stringify(studentQuery, null, 2));
@@ -648,7 +674,7 @@ const exportFailedEmailLogs = async (req, res) => {
         type: l.type,
         attempts: l.attempts,
         errorMessage: l.errorMessage || 'Unknown Error',
-        attemptedAt: l.attemptedAt ? new Date(l.attemptedAt).toLocaleString('en-IN') : '—',
+        attemptedAt: l.attemptedAt ? formatDateTime(l.attemptedAt) : '—',
       });
     });
 
@@ -676,7 +702,7 @@ const previewRecipientCount = async (req, res) => {
       return res.json({ success: true, count: 0 });
     }
 
-    const studentQuery = buildStudentEligibilityQuery(exam, req.body);
+    const studentQuery = await buildStudentEligibilityQuery(exam, req.body);
 
     console.log('[DEBUG] Recipients Preview Requested filters:', req.body);
     console.log('[DEBUG] Recipients Preview Mongo query:', JSON.stringify(studentQuery, null, 2));

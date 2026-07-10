@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../utils/api'
@@ -104,7 +104,7 @@ export default function Login() {
                   type={mode === 'admin' ? 'email' : 'text'}
                   value={form.identifier}
                   onChange={e => setForm(f => ({ ...f, identifier: e.target.value }))}
-                  placeholder={mode === 'admin' ? 'admin@sbist.edu' : 'e.g. SBIST-CSE-2026-001'}
+                  placeholder={mode === 'admin' ? 'admin@sbit.edu' : 'e.g. SBIT-CSE-2026-001'}
                   className="input-field"
                   required
                   autoFocus

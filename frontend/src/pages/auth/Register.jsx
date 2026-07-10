@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom'
+﻿import { useNavigate } from 'react-router-dom'
 import { GraduationCap, AlertTriangle, ArrowLeft } from 'lucide-react'
 
 export default function Register() {
@@ -44,7 +44,7 @@ export default function Register() {
             <div className="bg-slate-800/80 rounded-xl p-4 border border-slate-700/50 text-left space-y-3">
               <p className="text-xs text-slate-300 font-semibold uppercase tracking-wider">How to Register:</p>
               <ol className="list-decimal list-inside text-xs text-slate-400 space-y-2">
-                <li>Fill out and submit the official SBIST Google Registration Form.</li>
+                <li>Fill out and submit the official SBIT Google Registration Form.</li>
                 <li>The system will automatically process your response.</li>
                 <li>Your secure login credentials will be emailed to you immediately.</li>
               </ol>

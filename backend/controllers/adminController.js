@@ -39,7 +39,8 @@ const getAllStudents = async (req, res) => {
       .select('-password -auditLog')
       .sort({ createdAt: -1 })
       .skip((page - 1) * limit)
-      .limit(parseInt(limit));
+      .limit(parseInt(limit))
+      .lean();
 
     res.json({ success: true, students, total, page: parseInt(page), pages: Math.ceil(total / limit) });
   } catch (error) {
@@ -52,7 +53,8 @@ const getActiveStudents = async (req, res) => {
     const students = await Student.find({ isLoggedIn: true })
       .populate('department', 'name code')
       .populate('currentExam', 'title subject')
-      .select('-password');
+      .select('-password')
+      .lean();
     res.json({ success: true, students, count: students.length });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -385,7 +387,7 @@ const updateStudentProfile = async (req, res) => {
     const student = await Student.findById(studentId).populate('department', 'name code');
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
-    const allowedFields = ['department', 'year', 'semester', 'section', 'rollNumber', 'email', 'mobile', 'isActive'];
+    const allowedFields = ['name', 'department', 'year', 'semester', 'section', 'rollNumber', 'email', 'mobile', 'isActive'];
     const adminName = req.admin?.name || 'Admin';
     const adminRole = req.admin?.role || 'admin';
     const changes = [];
@@ -395,7 +397,13 @@ const updateStudentProfile = async (req, res) => {
       let newVal = req.body[field];
       let oldVal;
 
-      if (field === 'department') {
+      if (field === 'name') {
+        newVal = String(newVal).trim();
+        oldVal = student[field];
+        if (oldVal !== newVal) {
+          changes.push({ field: 'Name', oldValue: oldVal || '—', newValue: newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
+        }
+      } else if (field === 'department') {
         oldVal = student.department?._id?.toString() || student.department?.toString();
         // Resolve department name for audit
         const dept = await Department.findById(newVal);
@@ -578,11 +586,158 @@ const exportSelectedStudents = async (req, res) => {
   }
 };
 
+const createStudent = async (req, res) => {
+  try {
+    const { name, email, rollNumber, mobile, department, year, semester, section } = req.body;
+
+    if (!name || !email || !rollNumber || !mobile || !department || !year || !semester || !section) {
+      return res.status(400).json({ success: false, message: 'All fields are required' });
+    }
+
+    const cleanName = name.trim();
+    const cleanEmail = email.toLowerCase().trim();
+    const cleanRoll = rollNumber.trim();
+    const cleanMobile = mobile.trim();
+    const cleanSection = section.trim().toUpperCase();
+    const cleanYear = String(year).trim();
+    const cleanSemester = String(semester).trim();
+
+    const existingEmail = await Student.findOne({ email: cleanEmail });
+    if (existingEmail) {
+      return res.status(400).json({ success: false, message: 'Email address is already registered' });
+    }
+
+    const existingRoll = await Student.findOne({ rollNumber: cleanRoll });
+    if (existingRoll) {
+      return res.status(400).json({ success: false, message: 'Roll number is already registered' });
+    }
+
+    const dept = await Department.findById(department);
+    if (!dept || !dept.isActive) {
+      return res.status(400).json({ success: false, message: 'Invalid or inactive department' });
+    }
+
+    if (!['1', '2', '3', '4'].includes(cleanYear)) {
+      return res.status(400).json({ success: false, message: 'Invalid year. Must be between 1 and 4' });
+    }
+    if (!['1', '2'].includes(cleanSemester)) {
+      return res.status(400).json({ success: false, message: 'Invalid semester. Must be 1 or 2' });
+    }
+    if (!cleanSection) {
+      return res.status(400).json({ success: false, message: 'Section is required' });
+    }
+
+    const plainPassword = generatePassword(8);
+
+    let studentId;
+    let isUnique = false;
+    while (!isUnique) {
+      studentId = generateStudentId(dept.code, cleanYear);
+      const existingId = await Student.findOne({ studentId });
+      if (!existingId) {
+        isUnique = true;
+      }
+    }
+
+    const student = new Student({
+      studentId,
+      name: cleanName,
+      email: cleanEmail,
+      rollNumber: cleanRoll,
+      mobile: cleanMobile,
+      department: dept._id,
+      year: cleanYear,
+      semester: cleanSemester,
+      section: cleanSection,
+      password: plainPassword,
+      isPasswordChanged: false,
+      isActive: true
+    });
+
+    const adminName = req.admin?.name || 'Admin';
+    const adminRole = req.admin?.role || 'admin';
+    student.auditLog.push({
+      field: 'All',
+      oldValue: '—',
+      newValue: 'Account created manually by Admin',
+      changedBy: adminName,
+      changedByRole: adminRole,
+      changedAt: new Date()
+    });
+
+    await student.save();
+
+    let emailSent = false;
+    let emailError = '';
+    try {
+      const { sendWelcomeEmail } = require('../utils/emailService');
+      const mailRes = await sendWelcomeEmail({
+        ...student.toJSON(),
+        password: plainPassword,
+        department: dept
+      });
+      if (mailRes.success) {
+        emailSent = true;
+        student.welcomeEmailSent = true;
+        student.welcomeEmailSentAt = new Date();
+        await student.save();
+      } else {
+        emailError = mailRes.error || mailRes.reason || 'Failed to dispatch email';
+      }
+    } catch (mailErr) {
+      emailError = mailErr.message;
+      console.error('[ManualRegistration] Welcome email sending error:', mailErr);
+    }
+
+    if (req.admin) {
+      await req.admin.logActivity('CREATE_STUDENT', `Manually registered student ${student.studentId} (${student.name})`, req.ip);
+    }
+
+    res.status(201).json({
+      success: true,
+      message: emailSent
+        ? 'Student registered successfully and welcome email sent.'
+        : `Student registered successfully, but welcome email failed (${emailError}).`,
+      student,
+      plainPassword
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const deleteStudent = async (req, res) => {
+  try {
+    const { studentId } = req.params;
+    const student = await Student.findById(studentId);
+    if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
+
+    const attempts = await Result.countDocuments({ student: studentId });
+    if (attempts > 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Cannot delete student because they have attempted one or more exams'
+      });
+    }
+
+    await Student.findByIdAndDelete(studentId);
+
+    if (req.admin) {
+      await req.admin.logActivity('DELETE_STUDENT', `Deleted student ${student.studentId} (${student.name})`, req.ip);
+    }
+
+    res.json({ success: true, message: 'Student deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
 module.exports = {
   getAllStudents, getActiveStudents, generateStudentCredentials, toggleStudentStatus,
   forceLogoutStudent, getDepartments, createDepartment, updateDepartment, deleteDepartment,
   getSubjects, createSubject, updateSubject, deleteSubject,
   getDashboardStats, exportStudentsExcel, downloadCSVTemplate,
-  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents
+  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents,
+  createStudent, deleteStudent
 };
 

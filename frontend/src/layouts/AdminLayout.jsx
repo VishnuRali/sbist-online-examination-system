@@ -1,4 +1,4 @@
-import { useState } from 'react'
+﻿import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
@@ -47,7 +47,7 @@ export default function AdminLayout() {
           </div>
           {sidebarOpen && (
             <div className="overflow-hidden">
-              <p className="text-xs font-bold text-blue-400 leading-tight">SBIST</p>
+              <p className="text-xs font-bold text-blue-400 leading-tight">SBIT</p>
               <p className="text-[10px] text-slate-500 leading-tight">
                 {isSuperAdmin ? 'Super Admin' : 'Admin Portal'}
               </p>

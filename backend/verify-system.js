@@ -1,5 +1,5 @@
-/**
- * SBIST Online Examination System — Automated Verification Script
+﻿/**
+ * SBIT Online Examination System — Automated Verification Script
  *
  * Tests:
  *  1. MongoDB Connected
@@ -32,7 +32,7 @@ function result(label, passed, detail = '') {
 const verify = async () => {
   console.log('');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('   SBIST Online Examination System — Automated System Verification');
+  console.log('   SBIT Online Examination System — Automated System Verification');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('');
 
@@ -62,8 +62,8 @@ const verify = async () => {
 
   // ── 2. Super Admin exists & login works ──────────────────────────────────
   console.log('【2】Admin Login');
-  const adminEmail    = process.env.SUPER_ADMIN_EMAIL       || 'admin@sbist.edu';
-  const adminPassword = process.env.SUPER_ADMIN_PASSWORD    || 'Admin@SBIST2025';
+  const adminEmail    = process.env.SUPER_ADMIN_EMAIL       || 'admin@sbit.edu';
+  const adminPassword = process.env.SUPER_ADMIN_PASSWORD    || 'Admin@SBIT2025';
   const adminId       = process.env.SUPER_ADMIN_EMPLOYEE_ID || 'SUPERADMIN';
 
   const adminByEmail = await Admin.findOne({ email: adminEmail.toLowerCase() });

@@ -28,14 +28,29 @@ const toLocalISOString = (dateInput) => {
   if (!dateInput) return ''
   const d = new Date(dateInput)
   if (isNaN(d.getTime())) return ''
-  const pad = (n) => String(n).padStart(2, '0')
-  return (
-    d.getFullYear() + '-' +
-    pad(d.getMonth() + 1) + '-' +
-    pad(d.getDate()) + 'T' +
-    pad(d.getHours()) + ':' +
-    pad(d.getMinutes())
-  )
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    })
+    const parts = formatter.formatToParts(d)
+    const getVal = (type) => parts.find(p => p.type === type).value
+    return `${getVal('year')}-${getVal('month')}-${getVal('day')}T${getVal('hour')}:${getVal('minute')}`
+  } catch (e) {
+    const pad = (n) => String(n).padStart(2, '0')
+    return (
+      d.getFullYear() + '-' +
+      pad(d.getMonth() + 1) + '-' +
+      pad(d.getDate()) + 'T' +
+      pad(d.getHours()) + ':' +
+      pad(d.getMinutes())
+    )
+  }
 }
 
 const normalizeSectionValue = (section) => String(section || '').trim().toUpperCase()

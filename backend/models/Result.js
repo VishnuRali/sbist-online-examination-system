@@ -75,5 +75,9 @@ const resultSchema = new mongoose.Schema({
 
 // Ensure one result per student per exam
 resultSchema.index({ student: 1, exam: 1 }, { unique: true });
+resultSchema.index({ exam: 1, status: 1 });       // admin results listing, live monitor
+resultSchema.index({ exam: 1, isPassed: 1 });     // pass rate analytics
+resultSchema.index({ student: 1 });               // student's own result history
+resultSchema.index({ createdAt: -1 });            // pagination sort
 
 module.exports = mongoose.model('Result', resultSchema);

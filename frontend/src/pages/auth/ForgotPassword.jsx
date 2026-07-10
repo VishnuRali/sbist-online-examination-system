@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
@@ -127,7 +127,7 @@ export default function ForgotPassword() {
                   <input
                     type="text"
                     className="input-field"
-                    placeholder="e.g. SBIST-CSE-2026-001"
+                    placeholder="e.g. SBIT-CSE-2026-001"
                     value={form.studentId}
                     onChange={e => setForm(f => ({ ...f, studentId: e.target.value }))}
                     required
@@ -139,7 +139,7 @@ export default function ForgotPassword() {
                   <input
                     type="email"
                     className="input-field"
-                    placeholder="e.g. student@sbist.edu"
+                    placeholder="e.g. student@sbit.edu"
                     value={form.email}
                     onChange={e => setForm(f => ({ ...f, email: e.target.value }))}
                     required

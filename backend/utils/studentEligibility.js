@@ -1,19 +1,56 @@
 const mongoose = require('mongoose');
 
+const normalizeSection = (value) => {
+  // Convert "Section B" or "Sec B" or "B" to "B"
+  return String(value || '')
+    .trim()
+    .replace(/sec(tion)?\s*/i, '')
+    .toUpperCase();
+};
+
+const normalizeYear = (value) => {
+  // Convert "Year 4" or "4th Year" or "4" to "4"
+  return String(value || '')
+    .trim()
+    .replace(/[^0-9]/g, '');
+};
+
+const normalizeSemester = (value) => {
+  // Convert "Semester 1" or "Sem 1" or "1" to "1"
+  return String(value || '')
+    .trim()
+    .replace(/[^0-9]/g, '');
+};
+
+const resolveDepartmentId = async (dept) => {
+  if (!dept) return null;
+  if (typeof dept === 'object' && dept._id) {
+    return dept._id;
+  }
+  const trimmed = String(dept).trim();
+  if (mongoose.Types.ObjectId.isValid(trimmed)) {
+    return new mongoose.Types.ObjectId(trimmed);
+  }
+  const Department = require('../models/Department');
+  const doc = await Department.findOne({
+    $or: [
+      { code: { $regex: new RegExp(`^${trimmed}$`, 'i') } },
+      { name: { $regex: new RegExp(`^${trimmed}$`, 'i') } }
+    ]
+  }).lean();
+  return doc ? doc._id : null;
+};
+
 /**
  * Builds a unified MongoDB query to match eligible students for an exam.
  * 
  * Supports both automatic publication notifications (options.target === 'all')
  * and manual notifications/reminders with various targets/filters.
  */
-const buildStudentEligibilityQuery = (exam, options = {}) => {
+const buildStudentEligibilityQuery = async (exam, options = {}) => {
   const query = { isActive: true };
 
   if (!exam) return query;
-
-  const normalizeSection = (value) => String(value || '')
-    .trim()
-    .toUpperCase();
 
   const examDeptId = exam.department?._id || exam.department;
 
@@ -33,9 +70,9 @@ const buildStudentEligibilityQuery = (exam, options = {}) => {
   }
 
   // 2. Default academic criteria from exam
-  let deptId = examDeptId;
-  let year = String(exam.year || '').trim();
-  let semester = String(exam.semester || '').trim();
+  let deptId = await resolveDepartmentId(examDeptId);
+  let year = normalizeYear(exam.year);
+  let semester = normalizeSemester(exam.semester);
   
   // Parse exam sections (either array or string)
   const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
@@ -45,13 +82,13 @@ const buildStudentEligibilityQuery = (exam, options = {}) => {
   // 3. Handle filters vs. standard target types
   if (target === 'filter') {
     if (options.departmentId || options.department) {
-      deptId = options.departmentId || options.department;
+      deptId = await resolveDepartmentId(options.departmentId || options.department);
     }
     if (options.year !== undefined && options.year !== null && String(options.year).trim() !== '') {
-      year = String(options.year).trim();
+      year = normalizeYear(options.year);
     }
     if (options.semester !== undefined && options.semester !== null && String(options.semester).trim() !== '') {
-      semester = String(options.semester).trim();
+      semester = normalizeSemester(options.semester);
     }
     if (options.section !== undefined && options.section !== null && String(options.section).trim() !== '') {
       const sec = normalizeSection(options.section);
@@ -81,13 +118,13 @@ const buildStudentEligibilityQuery = (exam, options = {}) => {
 
       case 'year':
         const yVal = targetValue || year;
-        if (yVal) query.year = String(yVal).trim();
+        if (yVal) query.year = normalizeYear(yVal);
         break;
 
       case 'semester':
         if (year) query.year = year;
         const sVal = targetValue || semester;
-        if (sVal) query.semester = String(sVal).trim();
+        if (sVal) query.semester = normalizeSemester(sVal);
         break;
 
       case 'section':
@@ -108,11 +145,20 @@ const buildStudentEligibilityQuery = (exam, options = {}) => {
   }
 
   // 4. Force canonical normalization onto the final query object
+  if (!deptId || !year || !semester) {
+    return { _id: null };
+  }
   if (deptId) query.department = deptId;
-  if (year && !query.year) query.year = year;
-  if (semester && !query.semester) query.semester = semester;
+  if (year) query.year = year;
+  if (semester) query.semester = semester;
 
   return query;
 };
 
-module.exports = { buildStudentEligibilityQuery };
+module.exports = {
+  buildStudentEligibilityQuery,
+  normalizeSection,
+  normalizeYear,
+  normalizeSemester,
+  resolveDepartmentId
+};

@@ -1,4 +1,4 @@
-require('dotenv').config();
+﻿require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -57,7 +57,7 @@ app.use('/api/result', resultRoutes);
 app.get('/api/health', (req, res) => {
   res.json({
     status: 'OK',
-    message: 'SBIST Examination API is running',
+    message: 'SBIT Examination API is running',
     timestamp: new Date().toISOString(),
     version: '2.0.0',
   });
@@ -148,7 +148,7 @@ connectDB().then(() => {
     }
 
 
-    console.log('🎓 SBIST Online Examination System v2.0 ready!');
+    console.log('🎓 SBIT Online Examination System v2.0 ready!');
   });
 });
 

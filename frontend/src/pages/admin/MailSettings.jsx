@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { 
@@ -103,7 +103,7 @@ export default function MailSettings() {
               <input
                 type="email"
                 className="input-field"
-                placeholder="e.g. notifications@sbist.edu"
+                placeholder="e.g. notifications@sbit.edu"
                 value={form.gmailUser}
                 onChange={e => setForm(p => ({ ...p, gmailUser: e.target.value }))}
                 required

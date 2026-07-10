@@ -1,5 +1,5 @@
 /**
- * SBIST Exam System — Database Cleanup & Full Seed Script
+ * SBIT Exam System — Database Cleanup & Full Seed Script
  *
  * This script:
  * 1. Drops ALL collections (Students, Admins, Exams, Questions, Results,
@@ -29,7 +29,7 @@ const DEPARTMENTS = [
 const seed = async () => {
   console.log('');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('  SBIST Online Examination System — Full DB Reset');
+  console.log('  SBIT Online Examination System — Full DB Reset');
   console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
   console.log('');
   console.log('🔌 Connecting to MongoDB...');
@@ -71,7 +71,8 @@ const seed = async () => {
     Subject.deleteMany({}),
   ]);
   if (EmailLog) await EmailLog.deleteMany({});
-  if (Settings) await Settings.deleteMany({});
+  // Preserve Settings configuration so SMTP settings are not lost
+  console.log('   ✓ settings collection preserved');
 
   // Also drop sessions collection if it exists
   try {
@@ -112,8 +113,8 @@ const seed = async () => {
   console.log('');
 
   // ── 3. CREATE SUPER ADMIN ─────────────────────────────────
-  const email    = process.env.SUPER_ADMIN_EMAIL       || 'admin@sbist.edu';
-  const password = process.env.SUPER_ADMIN_PASSWORD    || 'Admin@SBIST2025';
+  const email    = process.env.SUPER_ADMIN_EMAIL       || 'admin@sbit.edu';
+  const password = process.env.SUPER_ADMIN_PASSWORD    || 'Admin@SBIT2025';
   const empId    = process.env.SUPER_ADMIN_EMPLOYEE_ID || 'SUPERADMIN';
 
   console.log('👤 Creating Super Admin...');

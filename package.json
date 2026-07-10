@@ -1,5 +1,5 @@
 {
-  "name": "sbist-exam-system-root",
+  "name": "sbit-exam-system-root",
   "version": "2.0.0",
   "description": "Root configuration to run backend and frontend concurrently",
   "scripts": {

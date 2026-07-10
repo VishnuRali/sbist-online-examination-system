@@ -9,7 +9,8 @@ const {
   getDepartments, createDepartment, updateDepartment, deleteDepartment,
   getSubjects, createSubject, updateSubject, deleteSubject,
   getDashboardStats, exportStudentsExcel, downloadCSVTemplate,
-  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents
+  updateStudentProfile, bulkUpdateStudents, getStudentAuditLog, exportSelectedStudents,
+  createStudent, deleteStudent
 } = require('../controllers/adminController');
 
 const multer = require('multer');
@@ -34,6 +35,8 @@ router.get('/dashboard', adminOnly, getDashboardStats);
 
 // ==================== STUDENTS ====================
 router.get('/students', adminOnly, getAllStudents);
+router.post('/students', adminOnly, createStudent);
+router.delete('/students/:studentId', adminOnly, deleteStudent);
 router.get('/students/active', adminOnly, getActiveStudents);
 router.post('/students/:studentId/credentials', adminOnly, generateStudentCredentials);
 router.patch('/students/:studentId/toggle', adminOnly, toggleStudentStatus);

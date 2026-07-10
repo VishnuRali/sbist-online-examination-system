@@ -8,6 +8,13 @@ const { shuffleArray } = require('../utils/generateId');
 const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
+const { parseToIST, formatDateTime } = require('../utils/dateFormatter');
+const {
+  normalizeYear,
+  normalizeSemester,
+  normalizeSection,
+  resolveDepartmentId
+} = require('../utils/studentEligibility');
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -36,7 +43,8 @@ const getExams = async (req, res) => {
       .populate('subject', 'name code')
       .populate('department', 'name code')
       .populate('createdBy', 'name email')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .lean();
 
     res.json({ success: true, exams });
   } catch (error) {
@@ -125,6 +133,9 @@ const validateExamOverlap = async (examData, excludeExamId = null) => {
 
 const createExam = async (req, res) => {
   try {
+    if (req.body.startTime) req.body.startTime = parseToIST(req.body.startTime);
+    if (req.body.endTime) req.body.endTime = parseToIST(req.body.endTime);
+
     await validateExamOverlap(req.body);
     const examData = { ...req.body, createdBy: req.admin._id };
 
@@ -155,6 +166,9 @@ const createExam = async (req, res) => {
 
 const updateExam = async (req, res) => {
   try {
+    if (req.body.startTime) req.body.startTime = parseToIST(req.body.startTime);
+    if (req.body.endTime) req.body.endTime = parseToIST(req.body.endTime);
+
     await validateExamOverlap(req.body, req.params.id);
 
     const updateData = { ...req.body };
@@ -200,8 +214,11 @@ const deleteExam = async (req, res) => {
 
 const publishExam = async (req, res) => {
   try {
+    console.log(`[PUBLISH] Requested exam ID: ${req.params.id}`);
     const exam = await Exam.findById(req.params.id);
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    console.log(`[PUBLISH] Loaded exam ID: ${exam._id}`);
+    console.log(`[PUBLISH] Loaded exam title: ${exam.title}`);
 
     const questionCount = await Question.countDocuments({ exam: req.params.id });
     if (questionCount === 0) {
@@ -238,6 +255,61 @@ const publishExam = async (req, res) => {
       emailErrorMsg = err.message;
     }
 
+    let eligibilityDiagnostics = null;
+    if (process.env.NODE_ENV === 'development') {
+      try {
+        const Student = require('../models/Student');
+        const examDeptId = await resolveDepartmentId(exam.department);
+
+        const allStudents = await Student.countDocuments({});
+        const activeStudents = await Student.countDocuments({ isActive: true });
+        
+        let departmentMatched = 0;
+        let yearMatched = 0;
+        let semesterMatched = 0;
+        let sectionMatched = 0;
+
+        if (examDeptId) {
+          departmentMatched = await Student.countDocuments({ isActive: true, department: examDeptId });
+          const normYear = normalizeYear(exam.year);
+          if (normYear) {
+            yearMatched = await Student.countDocuments({ isActive: true, department: examDeptId, year: normYear });
+            const normSem = normalizeSemester(exam.semester);
+            if (normSem) {
+              semesterMatched = await Student.countDocuments({ isActive: true, department: examDeptId, year: normYear, semester: normSem });
+              
+              const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
+                ? exam.sections.map(s => normalizeSection(s))
+                : (exam.section ? [normalizeSection(exam.section)] : []);
+              const activeSections = examSections.filter(s => s !== '' && s !== 'ALL' && s !== 'ALL SECTIONS');
+              
+              let sectionQuery = {
+                isActive: true,
+                department: examDeptId,
+                year: normYear,
+                semester: normSem
+              };
+              if (activeSections.length > 0) {
+                sectionQuery.section = { $in: activeSections };
+              }
+              sectionMatched = await Student.countDocuments(sectionQuery);
+            }
+          }
+        }
+
+        eligibilityDiagnostics = {
+          allStudents,
+          activeStudents,
+          departmentMatched,
+          yearMatched,
+          semesterMatched,
+          sectionMatched
+        };
+      } catch (diagErr) {
+        console.error('[publishExam] Failed to calculate eligibility diagnostics:', diagErr);
+      }
+    }
+
     res.json({
       success: true,
       examPublished: true,
@@ -260,7 +332,8 @@ const publishExam = async (req, res) => {
         failedCount: 0,
         failedStudents: [],
         emailServiceError: true
-      }
+      },
+      ...(eligibilityDiagnostics ? { eligibilityDiagnostics } : {})
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -270,12 +343,14 @@ const publishExam = async (req, res) => {
 const sendPublishNotifications = async (examId, targetFailedStudentIds = null) => {
   const EmailLog = require('../models/EmailLog');
   const { getGmailConfig, createTransporter, getReminderEmailHTML, parseSmtpError } = require('../utils/emailService');
+  const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
 
   const exam = await Exam.findById(examId).populate('department subject');
   if (!exam) throw new Error('Exam not found');
+  console.log(`[EMAIL] Exam ID: ${exam._id}`);
+  console.log(`[EMAIL] Exam title: ${exam.title}`);
 
-  const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
-  const studentQuery = buildStudentEligibilityQuery(exam, { target: 'all' });
+  const studentQuery = await buildStudentEligibilityQuery(exam, { target: 'all' });
 
   // If retrying, limit only to those failed student IDs
   if (targetFailedStudentIds && Array.isArray(targetFailedStudentIds)) {
@@ -296,36 +371,66 @@ const sendPublishNotifications = async (examId, targetFailedStudentIds = null) =
   console.log('Matched Student IDs:', eligibleStudents.map(s => s.studentId || s._id));
 
   // Load SMTP config
-  const { user, pass, portalUrl } = await getGmailConfig();
-  const isSmtpConfigured = !!(user && pass && !user.includes('your_gmail'));
+  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
+  const isSmtpConfigured = !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
   
   let sentCount = 0;
   let failedCount = 0;
   const failedStudentsList = [];
 
-  const transporter = isSmtpConfigured ? createTransporter(user, pass) : null;
+  const transporter = isSmtpConfigured ? createTransporter(user, pass, { host, port, secure }) : null;
+
+  let verificationError = null;
+  if (isSmtpConfigured) {
+    try {
+      await transporter.verify();
+    } catch (verifyErr) {
+      verificationError = parseSmtpError(verifyErr);
+      console.error('[SMTP] Pre-publish transporter verification failed:', verifyErr);
+    }
+  }
 
   for (const student of eligibleStudents) {
     // Generate email HTML
     const emailHtml = getReminderEmailHTML(student, exam, 'custom', portalUrl);
     
-    // Create email log
-    const log = new EmailLog({
-      to: student.email,
-      studentName: student.name,
-      studentId: student.studentId,
-      studentRef: student._id,
-      emailType: 'custom',
-      subject: `📚 Exam Announcement: ${exam.title}`,
-      body: emailHtml,
-      status: 'pending',
-      department: student.department?._id || student.department,
-      year: student.year,
-      semester: student.semester,
-      section: student.section,
-      exam: exam._id
+    // Check if EmailLog already exists
+    let log = await EmailLog.findOne({
+      student: student._id,
+      exam: exam._id,
+      type: 'custom'
     });
+
+    if (log) {
+      // If it has already been sent successfully, skip resending to avoid duplicates
+      if (log.status === 'sent') {
+        sentCount++;
+        continue;
+      }
+      log.status = 'pending';
+      log.attemptedAt = new Date();
+      log.attempts += 1;
+      log.errorMessage = '';
+    } else {
+      // Create new email log
+      log = new EmailLog({
+        to: student.email,
+        studentName: student.name,
+        studentId: student.studentId,
+        student: student._id,
+        type: 'custom',
+        subject: `📚 Exam Announcement: ${exam.title}`,
+        body: emailHtml,
+        status: 'pending',
+        department: student.department?._id || student.department,
+        year: student.year,
+        semester: student.semester,
+        section: student.section,
+        exam: exam._id
+      });
+    }
     await log.save();
+    console.log(`[EMAIL LOG] Exam ID: ${log.exam}`);
 
     if (!isSmtpConfigured) {
       log.status = 'failed';
@@ -343,9 +448,25 @@ const sendPublishNotifications = async (examId, targetFailedStudentIds = null) =
       continue;
     }
 
+    if (verificationError) {
+      log.status = 'failed';
+      log.errorMessage = `SMTP verification failed: ${verificationError}`;
+      await log.save();
+      failedCount++;
+      failedStudentsList.push({
+        _id: student._id.toString(),
+        name: student.name,
+        studentId: student.studentId,
+        email: student.email,
+        section: student.section || '—',
+        reason: `SMTP verification failed: ${verificationError}`
+      });
+      continue;
+    }
+
     try {
       await transporter.sendMail({
-        from: `"SBIST Exam Portal" <${user}>`,
+        from: `"SBIT Exam Portal" <${user}>`,
         to: student.email,
         subject: `📚 Exam Announcement: ${exam.title}`,
         html: emailHtml
@@ -1089,7 +1210,7 @@ const exportResultsPDF = async (req, res) => {
       ? `Subjects: ${exam.subjects.join(', ')}`
       : `Subject: ${exam?.subject?.name || '—'}`;
     doc.fontSize(11).font('Helvetica')
-      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${new Date().toLocaleString('en-IN')}`, 30, 44, { align: 'center' });
+      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${formatDateTime(new Date())}`, 30, 44, { align: 'center' });
 
     // Stats bar
     const total = results.length;

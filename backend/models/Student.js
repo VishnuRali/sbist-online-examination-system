@@ -45,6 +45,12 @@ const studentSchema = new mongoose.Schema({
   }],
 }, { timestamps: true });
 
+// ── Compound indexes for high-performance queries ────────────────────────────
+studentSchema.index({ department: 1, year: 1, semester: 1, section: 1 }); // eligibility queries
+studentSchema.index({ department: 1, year: 1, semester: 1 });             // broad search
+studentSchema.index({ isActive: 1, department: 1 });                      // active filter
+studentSchema.index({ name: 'text', email: 'text', studentId: 'text' });  // full-text search
+studentSchema.index({ createdAt: -1 });                                    // pagination sort
 
 studentSchema.pre('save', async function (next) {
   if (!this.isModified('password')) return next();

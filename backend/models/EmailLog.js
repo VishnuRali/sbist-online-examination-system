@@ -25,4 +25,11 @@ const emailLogSchema = new mongoose.Schema({
   section: { type: String, default: '' },
 }, { timestamps: true });
 
+// ── Compound indexes for high-performance queries ────────────────────────────
+emailLogSchema.index({ status: 1, nextAttemptAt: 1 }); // auto-retry cron query
+emailLogSchema.index({ student: 1 });                   // student lookup
+emailLogSchema.index({ exam: 1 });                      // exam logs
+emailLogSchema.index({ status: 1, createdAt: -1 });     // filtered listing + pagination
+emailLogSchema.index({ createdAt: -1 });                // default sort
+
 module.exports = mongoose.model('EmailLog', emailLogSchema);

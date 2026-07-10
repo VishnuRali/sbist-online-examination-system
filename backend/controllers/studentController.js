@@ -77,7 +77,7 @@ const getAvailableExams = async (req, res) => {
 
     const allExams = await Exam.find({
       status: { $in: ['scheduled', 'active'] },
-    }).populate('subject', 'name code').populate('department', 'name code');
+    }).populate('subject', 'name code').populate('department', 'name code').lean();
 
     const filteredExams = allExams.filter((exam) => {
       const examDepartmentId = exam.department?._id?.toString() || String(exam.department || '').trim();
@@ -127,16 +127,16 @@ const getAvailableExams = async (req, res) => {
     const completedResults = await Result.find({
       student: student._id,
       status: { $ne: 'in_progress' },
-    }).select('exam');
+    }).select('exam').lean();
     const completedExamIds = completedResults.map(r => r.exam.toString());
 
     const inProgressResult = await Result.findOne({
       student: student._id,
       status: 'in_progress',
-    }).select('exam');
+    }).select('exam').lean();
 
     const enrichedExams = filteredExams.map(exam => ({
-      ...exam.toObject(),
+      ...exam,
       isCompleted: completedExamIds.includes(exam._id.toString()),
       isInProgress: inProgressResult?.exam?.toString() === exam._id.toString(),
       isAvailable: now >= new Date(exam.startTime) && now <= new Date(exam.endTime),

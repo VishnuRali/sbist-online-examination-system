@@ -1,5 +1,5 @@
 {
-  "name": "sbist-exam-backend",
+  "name": "sbit-exam-backend",
   "version": "1.0.0",
   "description": "Backend API for SWARNA BHARATHI INSTITUTE Online Examination System",
   "main": "server.js",

@@ -1,9 +1,10 @@
-const express = require('express');
+﻿const express = require('express');
 const router = express.Router();
 const { adminOnly } = require('../middleware/auth');
 const { studentOnly } = require('../middleware/auth');
 const Result = require('../models/Result');
 const PDFDocument = require('pdfkit');
+const { formatDateTime } = require('../utils/dateFormatter');
 
 // ==================== ADMIN: Get all results ====================
 router.get('/', adminOnly, async (req, res) => {
@@ -69,8 +70,8 @@ router.get('/:resultId/pdf', studentOnly, async (req, res) => {
     doc.rect(0, 0, doc.page.width, 100).fill('#1e3a8a');
     doc.fillColor('white').fontSize(18).font('Helvetica-Bold')
       .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 50, 25, { align: 'center' });
-    doc.fontSize(11).font('Helvetica').text('SBIST Online Examination System — Result Certificate', 50, 52, { align: 'center' });
-    doc.fillColor('#60a5fa').fontSize(10).text(`Generated: ${new Date().toLocaleString('en-IN')}`, 50, 72, { align: 'center' });
+    doc.fontSize(11).font('Helvetica').text('SBIT Online Examination System — Result Certificate', 50, 52, { align: 'center' });
+    doc.fillColor('#60a5fa').fontSize(10).text(`Generated: ${formatDateTime(new Date())}`, 50, 72, { align: 'center' });
 
     doc.fillColor('#1e293b');
     let y = 120;
@@ -100,7 +101,7 @@ router.get('/:resultId/pdf', studentOnly, async (req, res) => {
     doc.roundedRect(50, y, 495, 85, 8).stroke('#94a3b8').fill('#f0f7ff');
     doc.fillColor('#1e40af').font('Helvetica-Bold').fontSize(12).text('EXAM INFORMATION', 65, y + 12);
     doc.font('Helvetica').fontSize(10).fillColor('#1e293b');
-    const examDate = result.exam.startTime ? new Date(result.exam.startTime).toLocaleString('en-IN') : '—';
+    const examDate = result.exam.startTime ? formatDateTime(result.exam.startTime) : '—';
     [
       ['Exam Title', result.exam.title],
       ['Subject', result.exam.subject?.name || '—'],
@@ -141,7 +142,7 @@ router.get('/:resultId/pdf', studentOnly, async (req, res) => {
     // Footer
     doc.fillColor('#94a3b8').font('Helvetica').fontSize(8)
       .text('This is a computer-generated result. No signature required.', 50, y, { align: 'center', width: 495 });
-    doc.text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY — SBIST Online Examination System', 50, y + 14, { align: 'center', width: 495 });
+    doc.text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY — SBIT Online Examination System', 50, y + 14, { align: 'center', width: 495 });
 
     doc.end();
   } catch (error) {

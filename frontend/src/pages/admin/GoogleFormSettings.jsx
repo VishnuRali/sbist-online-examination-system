@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+﻿import { useState, useEffect } from 'react'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { 
@@ -98,7 +98,7 @@ export default function GoogleFormSettings() {
       {/* Google Form Field Reference */}
       <div className="glass-card p-5 border border-blue-500/20 bg-blue-500/5">
         <h3 className="text-sm font-semibold text-blue-300 mb-3 flex items-center gap-2">
-          <CloudDownload size={15} /> Expected Google Form: <span className="font-mono text-xs text-blue-400">SBIST Online Examination Registration</span>
+          <CloudDownload size={15} /> Expected Google Form: <span className="font-mono text-xs text-blue-400">SBIT Online Examination Registration</span>
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
           {[
@@ -179,7 +179,7 @@ export default function GoogleFormSettings() {
                 <input
                   type="email"
                   className="input-field"
-                  placeholder="e.g. notifications@sbist.edu"
+                  placeholder="e.g. notifications@sbit.edu"
                   value={form.gmailUser}
                   onChange={e => setForm(p => ({ ...p, gmailUser: e.target.value }))}
                 />

@@ -532,8 +532,8 @@ export default function EmailLogs() {
                       )}
                     </td>
                     <td className="text-xs text-slate-400 font-medium">
-                      {log.year ? `Year ${log.year}` : '—'} &nbsp;•&nbsp; {log.semester ? `Sem ${log.semester}` : '—'}
-                      {log.section ? ` &nbsp;•&nbsp; Sec ${log.section}` : ''}
+                      {log.year ? `Year ${log.year}` : '—'} • {log.semester ? `Sem ${log.semester}` : '—'}
+                      {log.section ? ` • Sec ${log.section}` : ''}
                     </td>
                     <td>
                       <span className={`badge ${TYPE_COLORS[log.type] || 'badge-gray'}`}>

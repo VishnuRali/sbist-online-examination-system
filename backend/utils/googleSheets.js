@@ -1,4 +1,4 @@
-const { google } = require('googleapis');
+﻿const { google } = require('googleapis');
 const Settings = require('../models/Settings');
 
 // Helper to load credentials from DB or Env
@@ -54,7 +54,7 @@ const getSheetClient = async (serviceAccountJson) => {
  * Uses HEADER-BASED column mapping — reads the first row for column names,
  * builds a name→index map, then reads data by column name NOT by index.
  *
- * Expected column headers for "SBIST Online Examination Registration" form:
+ * Expected column headers for "SBIT Online Examination Registration" form:
  *   Timestamp
  *   Student Name        (Short Answer)
  *   Email Address       (Email)

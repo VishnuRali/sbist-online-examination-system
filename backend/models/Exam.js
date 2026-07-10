@@ -65,4 +65,10 @@ examSchema.methods.updateStatus = function () {
   }
 };
 
+// ── Compound indexes for high-performance queries ────────────────────────────
+examSchema.index({ status: 1, startTime: 1, endTime: 1 });               // status cron + student dashboard
+examSchema.index({ department: 1, status: 1 });                          // admin listing filter
+examSchema.index({ department: 1, year: 1, semester: 1, status: 1 });   // eligibility + filtering
+examSchema.index({ createdAt: -1 });                                      // default listing sort
+
 module.exports = mongoose.model('Exam', examSchema);
