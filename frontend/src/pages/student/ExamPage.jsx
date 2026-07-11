@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { useParams, useNavigate } from 'react-router-dom'
+import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { formatTime } from '../../utils/helpers'
 import {
   Clock, AlertTriangle, ChevronLeft, ChevronRight,
-  Flag, Send, Maximize, Eye, EyeOff, BookOpen
+  Flag, Send, Maximize, Eye, EyeOff, BookOpen, KeyRound
 } from 'lucide-react'
 
 // ──────────────────────────────────────────────────────────────
@@ -62,8 +62,8 @@ const QuestionPalette = ({ questions, answers, reviewList, currentIdx, onJump })
       <div className="px-4 pb-4 border-t border-slate-700/50 pt-3 space-y-1">
         {[
           { label: 'Total', value: questions.length, color: 'text-slate-300' },
-          { label: 'Answered', value: Object.keys(answers).length, color: 'text-emerald-400' },
-          { label: 'Not Answered', value: questions.length - Object.keys(answers).length, color: 'text-red-400' },
+          { label: 'Answered', value: questions.filter(q => !!answers[q._id?.toString()]).length, color: 'text-emerald-400' },
+          { label: 'Not Answered', value: questions.filter(q => !answers[q._id?.toString()]).length, color: 'text-red-400' },
           { label: 'Marked', value: reviewList.length, color: 'text-amber-400' },
         ].map(({ label, value, color }) => (
           <div key={label} className="flex justify-between text-xs">
@@ -82,6 +82,7 @@ const QuestionPalette = ({ questions, answers, reviewList, currentIdx, onJump })
 export default function ExamPage() {
   const { examId } = useParams()
   const navigate = useNavigate()
+  const location = useLocation()
 
   // Core state
   const [examData, setExamData] = useState(null)   // exam info + questions
@@ -108,6 +109,11 @@ export default function ExamPage() {
   const [currentSubjectName, setCurrentSubjectName] = useState('')
   const [completedSubjects, setCompletedSubjects] = useState([])
   const [subjectTransitioning, setSubjectTransitioning] = useState(false)
+  // Access code gate (first start only; shown when missing/invalid)
+  const [needsAccessCode, setNeedsAccessCode] = useState(false)
+  const [accessCodeInput, setAccessCodeInput] = useState('')
+  const [accessCodeError, setAccessCodeError] = useState('')
+  const [startingWithCode, setStartingWithCode] = useState(false)
 
   const autoSaveRef = useRef(null)
   const timerRef = useRef(null)
@@ -116,38 +122,61 @@ export default function ExamPage() {
   // Used by event handlers whose closures capture stale state.
   const submittedRef = useRef(false)
 
+  const applyStartResponse = useCallback((data) => {
+    const { exam, questions: qs, result, remainingSeconds,
+            currentSubjectIndex: csi, totalSubjects: ts, currentSubject } = data
+    setExamData(exam)
+    setQuestions(qs)
+    setResultId(result._id)
+    setTimeLeft(remainingSeconds)
+    setViolations(result.violations || 0)
+    setMaxViolations(exam.maxViolations || 3)
+    setCurrentSubjectIndex(csi || 0)
+    setTotalSubjects(ts || 1)
+    setCurrentSubjectName(currentSubject?.subjectName || exam.subjects?.[0]?.subjectName || '')
+    setCompletedSubjects(result.savedProgress?.completedSubjects || [])
+
+    const saved = result.savedProgress?.answers || {}
+    setAnswers(typeof saved === 'object' && !(saved instanceof Map) ? saved : {})
+    setReviewList(result.savedProgress?.reviewList || [])
+    setCurrentIdx(result.savedProgress?.currentQuestion || 0)
+    setNeedsAccessCode(false)
+    setAccessCodeError('')
+  }, [])
+
+  const startExamRequest = useCallback(async (accessCode) => {
+    const body = accessCode ? { accessCode } : {}
+    const res = await api.post(`/student/exams/${examId}/start`, body)
+    applyStartResponse(res.data)
+    // Clear location state so refresh resumes without re-prompting
+    if (location.state?.accessCode) {
+      navigate(location.pathname, { replace: true, state: {} })
+    }
+    return res.data
+  }, [examId, applyStartResponse, location.pathname, location.state?.accessCode, navigate])
 
   // ── Load exam ──────────────────────────────────────────────
   useEffect(() => {
     const load = async () => {
       try {
-        const res = await api.post(`/student/exams/${examId}/start`)
-        const { exam, questions: qs, result, remainingSeconds,
-                currentSubjectIndex: csi, totalSubjects: ts, currentSubject } = res.data
-        setExamData(exam)
-        setQuestions(qs)
-        setResultId(result._id)
-        setTimeLeft(remainingSeconds)
-        setViolations(result.violations || 0)
-        setMaxViolations(exam.maxViolations || 3)
-        setCurrentSubjectIndex(csi || 0)
-        setTotalSubjects(ts || 1)
-        setCurrentSubjectName(currentSubject?.subjectName || exam.subjects?.[0]?.subjectName || '')
-        setCompletedSubjects(result.savedProgress?.completedSubjects || [])
-
-        // Restore saved answers
-        const saved = result.savedProgress?.answers || {}
-        setAnswers(typeof saved === 'object' && !(saved instanceof Map) ? saved : {})
-        setReviewList(result.savedProgress?.reviewList || [])
-        setCurrentIdx(result.savedProgress?.currentQuestion || 0)
+        const codeFromNav = location.state?.accessCode
+        await startExamRequest(codeFromNav)
       } catch (err) {
-        const errorMsg = err.response?.data?.message || 'Failed to start exam';
-        if (errorMsg.toLowerCase().includes('already submitted')) {
-          toast.success('This exam has already been submitted. Redirecting to your results.', { id: 'already-submitted-toast' });
-          navigate('/student/results', { replace: true });
+        const errorMsg = err.response?.data?.message || 'Failed to start exam'
+        const lower = errorMsg.toLowerCase()
+        if (lower.includes('already submitted')) {
+          toast.success('This exam has already been submitted. Redirecting to your results.', { id: 'already-submitted-toast' })
+          navigate('/student/results', { replace: true })
+        } else if (lower.includes('access code')) {
+          if (document.fullscreenElement) {
+            document.exitFullscreen().catch(() => {})
+          }
+          setNeedsAccessCode(true)
+          setAccessCodeError(errorMsg)
+          setLoading(false)
         } else {
-          toast.error(errorMsg, { id: 'exam-start-err' });
-          navigate('/student', { replace: true });
+          toast.error(errorMsg, { id: 'exam-start-err' })
+          navigate('/student', { replace: true })
         }
       } finally {
         setLoading(false)
@@ -277,47 +306,45 @@ export default function ExamPage() {
         answers,
         currentQuestion: currentIdx,
         reviewList,
+        currentSubjectIndex,
       })
       if (showToast) toast.success('Progress saved', { duration: 1500 })
     } catch {}
-  }, [resultId, answers, currentIdx, reviewList])
+  }, [resultId, answers, currentIdx, reviewList, currentSubjectIndex])
 
-  // ── Submit current subject and advance to next (multi-subject) ───────────
-  const handleSubmitSubjectAndContinue = async () => {
-    if (submitting || subjectTransitioning) return
+  // ── Switch subject (multi-subject free navigation) ─────────
+  const handleSwitchSubject = async (targetIndex) => {
+    if (submitting || subjectTransitioning || submitted || submittedRef.current) return
+    if (targetIndex === currentSubjectIndex) return
+    if (targetIndex < 0 || targetIndex >= totalSubjects) return
+
     setSubjectTransitioning(true)
-    setShowSubmitConfirm(false)
     try {
-      clearInterval(timerRef.current)
-      const res = await api.post('/student/exams/submit-subject', {
+      const res = await api.post('/student/exams/switch-subject', {
         resultId,
+        subjectIndex: targetIndex,
         answers,
         reviewList,
-        subjectIndex: currentSubjectIndex,
+        currentQuestion: currentIdx,
       })
-
       const data = res.data
-      if (data.questions) {
-        // More subjects to go
-        setQuestions(data.questions)
-        setCurrentIdx(0)
-        setAnswers({})
-        setReviewList([])
-        setCurrentSubjectIndex(data.nextSubjectIndex)
-        setCurrentSubjectName(data.currentSubject?.subjectName || '')
-        setCompletedSubjects(data.completedSubjects || [])
-        setTimeLeft(data.remainingSeconds)
-        toast.success(data.message || 'Moving to next subject...')
-      } else {
-        // All done — final result returned
-        setSubmitResult(data.result)
-        submittedRef.current = true
-        setSubmitted(true)
-        if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
-        toast.success('Exam submitted successfully!')
+      setQuestions(data.questions || [])
+      setCurrentIdx(0)
+      // Keep merged answers across subjects (prefer server merge if returned)
+      if (data.answers && typeof data.answers === 'object') {
+        setAnswers(data.answers)
+      }
+      setReviewList([])
+      setCurrentSubjectIndex(data.currentSubjectIndex)
+      setCurrentSubjectName(data.currentSubject?.subjectName || '')
+      setCompletedSubjects(data.completedSubjects || [])
+      // Shared timer — do not reset from response if local countdown is already running;
+      // only sync if server remaining is lower (clock skew / late switch)
+      if (typeof data.remainingSeconds === 'number') {
+        setTimeLeft(t => Math.min(t, data.remainingSeconds))
       }
     } catch (err) {
-      toast.error(err.response?.data?.message || 'Failed to proceed. Try again.')
+      toast.error(err.response?.data?.message || 'Failed to switch subject')
     } finally {
       setSubjectTransitioning(false)
     }
@@ -393,11 +420,7 @@ export default function ExamPage() {
   }
 
   const clearAnswer = () => {
-    setAnswers(prev => {
-      const next = { ...prev }
-      delete next[currentQId]
-      return next
-    })
+    setAnswers(prev => ({ ...prev, [currentQId]: null }))
   }
 
   const toggleReview = () => {
@@ -411,6 +434,28 @@ export default function ExamPage() {
 
   const timerDanger = timeLeft <= 300 // 5 minutes warning
   const timerWarning = timeLeft <= 600 // 10 minutes
+
+  const handleAccessCodeSubmit = async (e) => {
+    e.preventDefault()
+    const code = accessCodeInput.trim()
+    if (!/^\d{6}$/.test(code)) {
+      setAccessCodeError('Enter the 6-digit access code provided by the proctor')
+      return
+    }
+    setStartingWithCode(true)
+    setAccessCodeError('')
+    try {
+      setLoading(true)
+      await startExamRequest(code)
+    } catch (err) {
+      const errorMsg = err.response?.data?.message || 'Invalid access code'
+      setAccessCodeError(errorMsg)
+      toast.error(errorMsg, { id: 'exam-access-code-err' })
+    } finally {
+      setStartingWithCode(false)
+      setLoading(false)
+    }
+  }
 
   // ── Submitted screen ──────────────────────────────────────
   if (submitted) {
@@ -441,6 +486,54 @@ export default function ExamPage() {
       </div>
     </div>
   )
+
+  if (needsAccessCode) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-950">
+        <div className="glass-card w-full max-w-md p-6 slide-up">
+          <div className="flex items-center gap-2 mb-4">
+            <KeyRound size={20} className="text-amber-400" />
+            <h1 className="text-lg font-bold text-slate-100">Enter Access Code</h1>
+          </div>
+          <p className="text-sm text-slate-400 mb-4">
+            Enter the 6-digit code announced by the exam proctor to begin.
+          </p>
+          <form onSubmit={handleAccessCodeSubmit} className="space-y-4">
+            <div>
+              <label className="input-label">Access Code</label>
+              <input
+                type="text"
+                inputMode="numeric"
+                maxLength={6}
+                autoFocus
+                value={accessCodeInput}
+                onChange={e => {
+                  setAccessCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))
+                  setAccessCodeError('')
+                }}
+                className="input-field font-mono tracking-[0.35em] text-center text-lg"
+                placeholder="••••••"
+                required
+              />
+              {accessCodeError && (
+                <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                  <AlertTriangle size={12} /> {accessCodeError}
+                </p>
+              )}
+            </div>
+            <div className="flex gap-3">
+              <button type="button" onClick={() => navigate('/student', { replace: true })} className="btn-secondary flex-1">
+                Back
+              </button>
+              <button type="submit" disabled={startingWithCode} className="btn-primary flex-1">
+                {startingWithCode ? 'Starting...' : 'Start Exam'}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-slate-950 no-select" style={{ userSelect: 'none' }}>
@@ -508,25 +601,39 @@ export default function ExamPage() {
         </div>
       </header>
 
-      {/* Multi-subject progress bar */}
+      {/* Multi-subject tabs — clickable free navigation */}
       {totalSubjects > 1 && (
         <div className="flex-shrink-0 bg-slate-900/80 border-b border-slate-800 px-4 py-2">
           <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Subject Progress:</span>
-            <div className="flex items-center gap-1.5">
-              {Array.from({ length: totalSubjects }).map((_, i) => (
-                <div key={i} className={`flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium border transition-all ${
-                  i === currentSubjectIndex
-                    ? 'bg-blue-500/20 border-blue-500/50 text-blue-300'
-                    : completedSubjects.includes(i)
-                    ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400'
-                    : 'bg-slate-800/50 border-slate-700/40 text-slate-500'
-                }`}>
-                  {completedSubjects.includes(i) ? '✓ ' : ''}
-                  {examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}
-                </div>
-              ))}
+            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Subjects:</span>
+            <div className="flex items-center gap-1.5 flex-wrap">
+              {Array.from({ length: totalSubjects }).map((_, i) => {
+                const isActive = i === currentSubjectIndex
+                const isVisited = completedSubjects.includes(i)
+                return (
+                  <button
+                    key={i}
+                    type="button"
+                    onClick={() => handleSwitchSubject(i)}
+                    disabled={subjectTransitioning || isActive}
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
+                      isActive
+                        ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 cursor-default'
+                        : isVisited
+                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer'
+                        : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-200 cursor-pointer'
+                    } disabled:opacity-60`}
+                    title={isActive ? 'Current subject' : `Switch to ${examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}`}
+                  >
+                    {isVisited && !isActive ? '✓ ' : ''}
+                    {examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}
+                  </button>
+                )
+              })}
             </div>
+            {subjectTransitioning && (
+              <span className="text-xs text-slate-500">Switching…</span>
+            )}
           </div>
         </div>
       )}
@@ -632,26 +739,13 @@ export default function ExamPage() {
               >
                 Next <ChevronRight size={16} />
               </button>
-            ) : totalSubjects > 1 && currentSubjectIndex < totalSubjects - 1 ? (
-              // Multi-subject: not the last subject
-              <button
-                onClick={handleSubmitSubjectAndContinue}
-                disabled={subjectTransitioning}
-                className="btn-success btn-sm flex items-center gap-2"
-              >
-                {subjectTransitioning ? (
-                  <><div className="spinner !w-4 !h-4 !border-t-white"></div> Loading...</>
-                ) : (
-                  <><Send size={14} /> Submit & Continue</>
-                )}
-              </button>
             ) : (
-              // Single subject or last subject of multi
               <button
                 onClick={() => setShowSubmitConfirm(true)}
-                className="btn-success btn-sm flex items-center gap-2"
+                disabled={submitting || subjectTransitioning}
+                className="btn-danger btn-sm flex items-center gap-2"
               >
-                <Send size={14} /> Submit{totalSubjects > 1 ? ' Final' : ''}
+                <Send size={14} /> Submit Exam
               </button>
             )}
           </div>
@@ -696,8 +790,8 @@ export default function ExamPage() {
 
             <div className="grid grid-cols-3 gap-3 mb-5 text-center">
               {[
-                { label: 'Answered', value: Object.keys(answers).length, color: 'text-emerald-400' },
-                { label: 'Not Answered', value: questions.length - Object.keys(answers).length, color: 'text-red-400' },
+                { label: 'Answered', value: Object.values(answers).filter(Boolean).length, color: 'text-emerald-400' },
+                { label: 'This subject left', value: questions.filter(q => !answers[q._id?.toString()]).length, color: 'text-red-400' },
                 { label: 'Marked', value: reviewList.length, color: 'text-amber-400' },
               ].map(({ label, value, color }) => (
                 <div key={label} className="bg-slate-800/60 rounded-xl p-3 border border-slate-700/30">
@@ -707,10 +801,10 @@ export default function ExamPage() {
               ))}
             </div>
 
-            {questions.length - Object.keys(answers).length > 0 && (
+            {(questions.filter(q => !answers[q._id?.toString()]).length > 0 || Object.values(answers).filter(Boolean).length === 0) && (
               <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl mb-4">
                 <p className="text-amber-300 text-xs">
-                  ⚠️ You have {questions.length - Object.keys(answers).length} unanswered question(s). Are you sure you want to submit?
+                  ⚠️ Some questions may still be unanswered across subjects. Submit will finalize the entire exam.
                 </p>
               </div>
             )}

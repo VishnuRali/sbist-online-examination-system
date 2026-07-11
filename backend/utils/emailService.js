@@ -25,6 +25,9 @@ const getGmailConfig = async () => {
     pass = process.env.SMTP_PASS || process.env.EMAIL_PASS || process.env.GMAIL_APP_PASSWORD;
   }
 
+  if (user) user = user.trim();
+  if (pass) pass = pass.replace(/\s+/g, '');
+
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const isGmail = host.toLowerCase().includes('gmail.com');
   const port = isGmail ? 587 : Number(process.env.SMTP_PORT || 465);
@@ -36,6 +39,9 @@ const getGmailConfig = async () => {
 
 // Create transporter
 const createTransporter = (user, pass, options = {}) => {
+  if (user) user = user.trim();
+  if (pass) pass = pass.replace(/\s+/g, '');
+
   const host = options.host || process.env.SMTP_HOST || 'smtp.gmail.com';
   const isGmail = host.toLowerCase().includes('gmail.com');
   const port = isGmail ? 587 : Number(options.port || process.env.SMTP_PORT || 465);
@@ -112,7 +118,7 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
   .body { padding: 32px 24px; }
   .greeting { font-size: 17px; color: #1e293b; margin-bottom: 20px; }
   .credential-box { background: #0f172a; border-radius: 10px; padding: 20px; margin: 20px 0; }
-  .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding-bottom: 10px; border-bottom: 1px solid #1e293b; }
+  .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding-bottom: 10px; border-bottom: 1px solid #1e3a8a; }
   .credential-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
   .cred-label { color: #94a3b8; font-size: 13px; }
   .cred-value { color: #60a5fa; font-size: 15px; font-weight: 700; font-family: monospace; letter-spacing: 1px; }
@@ -326,8 +332,6 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
 </body>
 </html>`;
 };
-
-
 
 // ==================== SMTP ERROR PARSER & RETRY SYSTEM ====================
 
@@ -553,12 +557,9 @@ const retryAllFailedLogs = async () => {
       failCount++;
     }
   }
-  return { successCount, failCount, total: failedLogs.length };
+  return { success: successCount, failed: failCount };
 };
 
-/**
- * Verify SMTP connection by sending a test email
- */
 const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => {
   try {
     const transporter = createTransporter(testUser, testPass);

@@ -5,7 +5,7 @@ import api from '../../utils/api'
 import { formatDateTime } from '../../utils/helpers'
 import {
   Clock, BookOpen, Calendar, AlertCircle, CheckCircle,
-  PlayCircle, Lock, ChevronRight, GraduationCap
+  PlayCircle, Lock, ChevronRight, GraduationCap, KeyRound, X
 } from 'lucide-react'
 
 export default function StudentDashboard() {
@@ -13,6 +13,9 @@ export default function StudentDashboard() {
   const navigate = useNavigate()
   const [exams, setExams] = useState([])
   const [loading, setLoading] = useState(true)
+  const [accessModalExam, setAccessModalExam] = useState(null)
+  const [accessCodeInput, setAccessCodeInput] = useState('')
+  const [accessError, setAccessError] = useState('')
 
   useEffect(() => {
     api.get('/student/exams')
@@ -30,10 +33,40 @@ export default function StudentDashboard() {
     return { label: 'Unavailable', color: 'badge-gray', icon: Lock, canStart: false, btnLabel: 'Unavailable', btnClass: 'btn-secondary' }
   }
 
+  const openAccessModal = (exam) => {
+    setAccessModalExam(exam)
+    setAccessCodeInput('')
+    setAccessError('')
+  }
+
+  const closeAccessModal = () => {
+    setAccessModalExam(null)
+    setAccessCodeInput('')
+    setAccessError('')
+  }
+
+  const submitAccessCode = (e) => {
+    e.preventDefault()
+    const code = accessCodeInput.trim()
+    if (!/^\d{6}$/.test(code)) {
+      setAccessError('Enter the 6-digit access code provided by the proctor')
+      return
+    }
+    const examId = accessModalExam._id
+    closeAccessModal()
+    navigate(`/student/exam/${examId}`, { state: { accessCode: code } })
+  }
+
   const handleAction = (exam) => {
     const state = getExamState(exam)
     if (exam.isCompleted) return navigate('/student/results')
-    if (state.canStart) return navigate(`/student/exam/${exam._id}`)
+    if (!state.canStart) return
+    // Resume skips access code; first start requires it
+    if (exam.isInProgress) return navigate(`/student/exam/${exam._id}`)
+    if (exam.accessCode) {
+      return navigate(`/student/exam/${exam._id}`, { state: { accessCode: exam.accessCode } })
+    }
+    openAccessModal(exam)
   }
 
   const available = exams.filter(e => e.isAvailable && !e.isCompleted)
@@ -223,6 +256,56 @@ export default function StudentDashboard() {
             ))}
           </div>
         </section>
+      )}
+
+      {/* Access code modal — first start only */}
+      {accessModalExam && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glass-card w-full max-w-md slide-up">
+            <div className="flex items-center justify-between p-5 border-b border-slate-700/50">
+              <div className="flex items-center gap-2">
+                <KeyRound size={18} className="text-amber-400" />
+                <h2 className="text-lg font-bold text-slate-100">Enter Access Code</h2>
+              </div>
+              <button type="button" onClick={closeAccessModal} className="btn-icon text-slate-400 hover:text-slate-200">
+                <X size={18} />
+              </button>
+            </div>
+            <form onSubmit={submitAccessCode} className="p-5 space-y-4">
+              <p className="text-sm text-slate-400">
+                Enter the 6-digit code announced by the exam proctor to start{' '}
+                <span className="text-slate-200 font-semibold">{accessModalExam.title}</span>.
+              </p>
+              <div>
+                <label className="input-label">Access Code</label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  pattern="\d{6}"
+                  maxLength={6}
+                  autoFocus
+                  value={accessCodeInput}
+                  onChange={e => {
+                    setAccessCodeInput(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    setAccessError('')
+                  }}
+                  className="input-field font-mono tracking-[0.35em] text-center text-lg"
+                  placeholder="••••••"
+                  required
+                />
+                {accessError && (
+                  <p className="text-xs text-red-400 mt-1.5 flex items-center gap-1">
+                    <AlertCircle size={12} /> {accessError}
+                  </p>
+                )}
+              </div>
+              <div className="flex gap-3 pt-1">
+                <button type="button" onClick={closeAccessModal} className="btn-secondary flex-1">Cancel</button>
+                <button type="submit" className="btn-primary flex-1">Continue</button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -29,6 +29,10 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     await mongoose.connect(uri);
   });
 
+  t.beforeEach(async () => {
+    // Optional: add beforeEach hooks if needed
+  });
+
   t.after(async () => {
     await mongoose.disconnect();
     await mongoServer.stop();
@@ -288,5 +292,108 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     const recoveredJob = await EmailQueue.findById(job._id);
     assert.strictEqual(recoveredJob.status, 'queued');
     assert.strictEqual(recoveredJob.retryCount, 1);
+  });
+
+  await t.test('Exam Start & Access Code Regression Tests', async () => {
+    await Result.deleteMany({});
+    const exam = await Exam.findOne({ title: 'CSE All Sections Exam' });
+    const student = await Student.findOne({ section: 'B' });
+    
+    const startExamLogic = async (studentId, examId, submittedCode) => {
+      const ex = await Exam.findById(examId);
+      const resVal = await Result.findOne({ student: studentId, exam: examId, status: 'in_progress' });
+      if (!resVal) {
+        const code = String(submittedCode || '').trim();
+        if (!code || code !== String(ex.accessCode).trim()) {
+          throw new Error('Invalid access code');
+        }
+      }
+      
+      const newResult = new Result({
+        student: studentId,
+        exam: examId,
+        totalMarks: 100,
+        startedAt: new Date(),
+        status: 'in_progress'
+      });
+      await newResult.save();
+      return newResult;
+    };
+
+    const res1 = await startExamLogic(student._id, exam._id, '111111');
+    assert.ok(res1);
+    assert.strictEqual(res1.status, 'in_progress');
+
+    await Result.deleteMany({});
+
+    try {
+      await startExamLogic(student._id, exam._id, 'wrongcode');
+      assert.fail('Should have failed with invalid access code');
+    } catch (err) {
+      assert.strictEqual(err.message, 'Invalid access code');
+    }
+    const resCount = await Result.countDocuments({ student: student._id, exam: exam._id });
+    assert.strictEqual(resCount, 0, 'No Result should be created on failure');
+  });
+
+  await t.test('Email Queue Worker Failure Recovery Tests', async () => {
+    await EmailQueue.deleteMany({});
+    await EmailLog.deleteMany({});
+    
+    const exam = await Exam.findOne({ title: 'CSE All Sections Exam' });
+    const student = await Student.findOne({ section: 'B' });
+
+    const job = await EmailQueue.create({
+      exam: exam._id,
+      student: student._id,
+      email: student.email,
+      notificationType: 'welcome',
+      status: 'queued',
+      nextRetryTime: new Date()
+    });
+
+    const simulateWorkerSendFail = async (jobRecord, errorMsg) => {
+      jobRecord.status = 'processing';
+      await jobRecord.save();
+      
+      const nextRetry = jobRecord.retryCount + 1;
+      if (nextRetry >= jobRecord.maxRetryCount || errorMsg.includes('credentials')) {
+        jobRecord.status = 'failed';
+        jobRecord.failedAt = new Date();
+        jobRecord.failureReason = errorMsg;
+        await jobRecord.save();
+      } else {
+        const backoffMs = Math.pow(2, nextRetry) * 60 * 1000;
+        jobRecord.status = 'queued';
+        jobRecord.retryCount = nextRetry;
+        jobRecord.nextRetryTime = new Date(Date.now() + backoffMs);
+        jobRecord.failureReason = errorMsg;
+        await jobRecord.save();
+      }
+
+      await EmailLog.create({
+        to: jobRecord.email,
+        studentName: student.name,
+        studentId: student.studentId,
+        student: student._id,
+        type: jobRecord.notificationType,
+        subject: 'Welcome',
+        status: 'failed',
+        errorMessage: errorMsg,
+        exam: exam._id,
+        attempts: nextRetry
+      });
+    };
+
+    await simulateWorkerSendFail(job, 'Invalid SMTP credentials');
+
+    const finalJob = await EmailQueue.findById(job._id);
+    assert.strictEqual(finalJob.status, 'failed');
+    assert.strictEqual(finalJob.failureReason, 'Invalid SMTP credentials');
+
+    const log = await EmailLog.findOne({ student: student._id });
+    assert.ok(log);
+    assert.strictEqual(log.status, 'failed');
+    assert.strictEqual(log.errorMessage, 'Invalid SMTP credentials');
   });
 });

@@ -1,4 +1,4 @@
-﻿import { useState, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { 
@@ -61,10 +61,12 @@ export default function MailSettings() {
       if (res.data.smtp?.success) {
         toast.success(recipientEmail ? 'Test email sent successfully!' : 'SMTP connection verified!')
       } else {
-        toast.error('SMTP connection failed verification.')
+        const smtpReason = res.data.smtp?.reason ? `: ${res.data.smtp.reason}` : ''
+        toast.error(`SMTP connection failed verification${smtpReason}.`)
       }
     } catch (err) {
-      toast.error('Testing connection failed.')
+      const errMsg = err.response?.data?.message || err.message || 'Testing connection failed.'
+      toast.error(errMsg)
     } finally {
       setTesting(false)
     }
@@ -213,7 +215,7 @@ export default function MailSettings() {
             type="button"
             onClick={handleTestConnection}
             disabled={testing || saving}
-            className="btn-secondary flex items-center gap-2"
+            className="btn-secondary flex-center gap-2"
           >
             {testing ? <RefreshCw className="animate-spin" size={16} /> : <ShieldAlert size={16} />}
             Test Connection & Send Email
@@ -222,7 +224,7 @@ export default function MailSettings() {
           <button
             type="submit"
             disabled={saving || testing}
-            className="btn-primary flex items-center gap-2 px-6"
+            className="btn-primary flex-center gap-2 px-6"
           >
             {saving ? <div className="spinner !w-4 !h-4 !border-t-white" /> : <Save size={16} />}
             Save Settings
