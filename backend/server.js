@@ -88,7 +88,6 @@ const connectDB = async () => {
     process.exit(1);
   }
 
-  // Pre-connection logs and checks
   logTargetDatabase(uri);
   checkPasswordEncoding(uri);
 
@@ -102,7 +101,31 @@ const connectDB = async () => {
   }
 };
 
-connectDB().then(() => {
+connectDB().then(async () => {
+  // One-time persistent backfill for legacy exams missing a valid 6-digit accessCode
+  try {
+    const Exam = require('./models/Exam');
+    const { generateAccessCode } = require('./utils/generateId');
+    const legacyExams = await Exam.find({
+      $or: [
+        { accessCode: { $exists: false } },
+        { accessCode: null },
+        { accessCode: '' },
+        { accessCode: { $not: /^\d{6}$/ } }
+      ]
+    });
+    if (legacyExams.length > 0) {
+      console.log(`[Backfill] Found ${legacyExams.length} legacy exams missing a valid 6-digit access code. Backfilling...`);
+      for (const exam of legacyExams) {
+        const code = generateAccessCode();
+        await Exam.findByIdAndUpdate(exam._id, { accessCode: code });
+        console.log(`[Backfill] Exam "${exam.title}" (${exam._id}) updated with access code ${code}`);
+      }
+    }
+  } catch (err) {
+    console.error('[Backfill] Error during legacy exams backfill:', err.message);
+  }
+
   const PORT = process.env.PORT || 5000;
   app.listen(PORT, () => {
     console.log(`🚀 Server running on port ${PORT} in ${process.env.NODE_ENV} mode`);
@@ -119,21 +142,15 @@ connectDB().then(() => {
       const { startEmailWorker } = require('./jobs/emailWorker');
       startEmailWorker();
 
-      // ── Exam status auto-updater ─────────────────────────────────────────
-      // Promotes: scheduled → active (when startTime reached)
-      //           active → completed (when endTime passed)
-      // Runs every 60 seconds.
       const cron = require('node-cron');
       const Exam = require('./models/Exam');
       cron.schedule('* * * * *', async () => {
         try {
           const now = new Date();
-          // scheduled → active
           const activated = await Exam.updateMany(
             { status: 'scheduled', startTime: { $lte: now }, endTime: { $gt: now } },
             { $set: { status: 'active' } }
           );
-          // active → completed
           const completed = await Exam.updateMany(
             { status: 'active', endTime: { $lte: now } },
             { $set: { status: 'completed' } }
