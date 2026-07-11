@@ -1,4 +1,4 @@
-﻿const path = require('path');
+const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const nodemailer = require('nodemailer');
@@ -26,8 +26,9 @@ const getGmailConfig = async () => {
   }
 
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(process.env.SMTP_PORT || 465);
-  const secure = process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true;
+  const isGmail = host.toLowerCase().includes('gmail.com');
+  const port = isGmail ? 587 : Number(process.env.SMTP_PORT || 465);
+  const secure = isGmail ? false : (process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true);
   const portalUrl = settings?.examPortalUrl || process.env.EXAM_URL || 'http://localhost:5173';
 
   return { user, pass, host, port, secure, portalUrl };
@@ -36,10 +37,11 @@ const getGmailConfig = async () => {
 // Create transporter
 const createTransporter = (user, pass, options = {}) => {
   const host = options.host || process.env.SMTP_HOST || 'smtp.gmail.com';
-  const port = Number(options.port || process.env.SMTP_PORT || 465);
-  const secure = options.secure !== undefined
+  const isGmail = host.toLowerCase().includes('gmail.com');
+  const port = isGmail ? 587 : Number(options.port || process.env.SMTP_PORT || 465);
+  const secure = isGmail ? false : (options.secure !== undefined
     ? options.secure
-    : (process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true);
+    : (process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true));
 
   const isDev = process.env.NODE_ENV === 'development';
 
@@ -52,6 +54,11 @@ const createTransporter = (user, pass, options = {}) => {
       rejectUnauthorized: !isDev
     }
   };
+
+  if (isGmail) {
+    mailOptions.requireTLS = true;
+    mailOptions.family = 4;
+  }
 
   if (isDev) {
     mailOptions.debug = true;
