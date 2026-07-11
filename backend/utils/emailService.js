@@ -2,13 +2,76 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const nodemailer = require('nodemailer');
+const brevo = require('@getbrevo/brevo');
 const EmailLog = require('../models/EmailLog');
 const Settings = require('../models/Settings');
+
+// Brevo Email API configuration
+const getBrevoConfig = () => {
+  const apiKey = process.env.BREVO_API_KEY;
+  const senderEmail = process.env.BREVO_SENDER_EMAIL;
+  const senderName = process.env.BREVO_SENDER_NAME || 'SBIT Examinations';
+
+  return {
+    apiKey,
+    senderEmail,
+    senderName
+  };
+};
+
+// Send email using Brevo HTTPS API
+const sendWithBrevo = async ({ to, subject, html, text }) => {
+  const { apiKey, senderEmail, senderName } = getBrevoConfig();
+
+  if (!apiKey || !senderEmail) {
+    throw new Error(
+      'Brevo is not configured. BREVO_API_KEY or BREVO_SENDER_EMAIL is missing.'
+    );
+  }
+
+  const apiInstance = new brevo.TransactionalEmailsApi();
+
+  apiInstance.setApiKey(
+    brevo.TransactionalEmailsApiApiKeys.apiKey,
+    apiKey
+  );
+
+  const email = new brevo.SendSmtpEmail();
+
+  email.sender = {
+    name: senderName,
+    email: senderEmail
+  };
+
+  email.to = [
+    {
+      email: to
+    }
+  ];
+
+  email.subject = subject;
+  email.htmlContent = html;
+
+  if (text) {
+    email.textContent = text;
+  }
+
+  const response = await apiInstance.sendTransacEmail(email);
+
+  return {
+    success: true,
+    messageId:
+      response?.body?.messageId ||
+      response?.messageId ||
+      'Brevo email accepted'
+  };
+};
+
 
 // Helper to load Gmail credentials from DB or Env
 const getGmailConfig = async () => {
   const settings = await Settings.findOne();
-  
+
   // 1. Saved active Mail Settings from DB
   let user = settings?.gmailUser;
   let pass = settings?.gmailAppPassword;
@@ -34,7 +97,7 @@ const getGmailConfig = async () => {
 
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const isGmail = host.toLowerCase().includes('gmail.com');
-  
+
   if (isGmail && pass && pass.length !== 16) {
     throw new Error('Invalid Gmail App Password length');
   }
@@ -234,12 +297,12 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
 const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   const typeLabels = {
     reminder_24h: '24 Hours',
-    reminder_1h:  '1 Hour',
+    reminder_1h: '1 Hour',
     reminder_30m: '30 Minutes',
-    custom:       'Soon',
+    custom: 'Soon',
   };
-  const label     = typeLabels[type] || '30 Minutes';
-  const urgency   = type === 'reminder_30m' ? '🔴' : type === 'reminder_1h' ? '🟡' : '🟢';
+  const label = typeLabels[type] || '30 Minutes';
+  const urgency = type === 'reminder_30m' ? '🔴' : type === 'reminder_1h' ? '🟡' : '🟢';
   const alertColor = type === 'reminder_30m' ? '#dc2626' : type === 'reminder_1h' ? '#d97706' : '#059669';
 
   const { formatEmailDate, formatTime } = require('./dateFormatter');
@@ -257,7 +320,7 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   } else {
     subjectName = typeof exam.subject === 'object' ? (exam.subject?.name || 'N/A') : (exam.subject || 'N/A');
   }
-  const deptName     = typeof exam.department === 'object' ? (exam.department?.name || 'N/A') : (exam.department || 'N/A');
+  const deptName = typeof exam.department === 'object' ? (exam.department?.name || 'N/A') : (exam.department || 'N/A');
   const sectionLabel = student.section && student.section !== '' ? `Section ${student.section}` : (exam.section && exam.section !== '' ? `Section ${exam.section}` : 'All Sections');
   const instructions = (exam.instructions || '').trim();
 
@@ -305,19 +368,19 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
     <p style="color:#1e40af;font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:1px;margin:0 0 8px;">📝 Exam Details</p>
     <table style="width:100%;border-collapse:collapse;border:1px solid #e2e8f0;border-radius:8px;overflow:hidden;margin-bottom:20px;">
       <tbody>
-        ${infoRow('Student Name',    student.name)}
-        ${infoRow('Student ID',      student.studentId)}
-        ${infoRow('Roll Number',     student.rollNumber || '—')}
-        ${infoRow('Exam Title',     exam.title)}
-        ${infoRow('Subject',        subjectName)}
-        ${infoRow('Department',     deptName)}
+        ${infoRow('Student Name', student.name)}
+        ${infoRow('Student ID', student.studentId)}
+        ${infoRow('Roll Number', student.rollNumber || '—')}
+        ${infoRow('Exam Title', exam.title)}
+        ${infoRow('Subject', subjectName)}
+        ${infoRow('Department', deptName)}
         ${infoRow('Year / Semester', `Year ${exam.year} &nbsp;|&nbsp; Semester ${exam.semester}`)}
-        ${infoRow('Section',        sectionLabel)}
-        ${infoRow('Date',           examDate)}
-        ${infoRow('Start Time',     examTime)}
-        ${infoRow('Duration',       `${exam.duration} Minutes`)}
-        ${infoRow('Total Marks',    String(exam.totalMarks || '—'))}
-        ${infoRow('Pass Marks',     String(exam.passMarks  || '—'))}
+        ${infoRow('Section', sectionLabel)}
+        ${infoRow('Date', examDate)}
+        ${infoRow('Start Time', examTime)}
+        ${infoRow('Duration', `${exam.duration} Minutes`)}
+        ${infoRow('Total Marks', String(exam.totalMarks || '—'))}
+        ${infoRow('Pass Marks', String(exam.passMarks || '—'))}
       </tbody>
     </table>
 
@@ -405,13 +468,10 @@ const sendWelcomeEmail = async (student, exam = null) => {
   }
 
   try {
-    const transporter = createTransporter(user, pass, { host, port, secure });
-    await transporter.verify();
-    await transporter.sendMail({
-      from: `"SBIT Examinations" <${user}>`,
+    await sendWithBrevo({
       to: student.email,
       subject: 'SBIT Online Examination — Your Account Details & Login Credentials',
-      html: getWelcomeEmailHTML(student, portalUrl),
+      html: getWelcomeEmailHTML(student, portalUrl)
     });
 
     log.status = 'sent';
@@ -434,10 +494,10 @@ const sendReminderEmail = async (student, exam, type) => {
   const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
   const typeLabel = {
     reminder_24h: '24 Hours',
-    reminder_1h:  '1 Hour',
+    reminder_1h: '1 Hour',
     reminder_30m: '30 Minutes',
   }[type] || '30 Minutes';
-  
+
   const log = new EmailLog({
     to: student.email,
     studentName: student.name,
@@ -551,7 +611,7 @@ const retryEmailLog = async (log) => {
   } catch (error) {
     log.status = 'failed';
     log.errorMessage = parseSmtpError(error);
-    
+
     if (log.attempts < 4) {
       const backoffMinutes = [0, 1, 5, 15][log.attempts] || 15;
       log.nextAttemptAt = new Date(Date.now() + backoffMinutes * 60000);
@@ -607,9 +667,9 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
         `
       });
 
-      return { 
-        success: true, 
-        messageId: info.messageId, 
+      return {
+        success: true,
+        messageId: info.messageId,
         response: info.response,
         envelope: info.envelope
       };
@@ -618,20 +678,20 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
     return { success: true };
   } catch (error) {
     console.error('[SMTP] Connection verify failed:', error);
-    
+
     let selfSignedIssue = false;
     if (error.message && error.message.includes('self-signed certificate')) {
       selfSignedIssue = true;
     }
 
-    return { 
-      success: false, 
-      reason: parseSmtpError(error), 
+    return {
+      success: false,
+      reason: parseSmtpError(error),
       code: error.code,
       command: error.command,
       selfSignedIssue,
 
-      stack: error.stack 
+      stack: error.stack
     };
   }
 };
@@ -669,9 +729,9 @@ const sendOtpEmail = async (email, name, otp) => {
   }
 };
 
-module.exports = { 
-  sendWelcomeEmail, 
-  sendReminderEmail, 
+module.exports = {
+  sendWelcomeEmail,
+  sendReminderEmail,
   isEmailConfigured,
   testSmtpConnection,
   getGmailConfig,
