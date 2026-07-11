@@ -5,9 +5,12 @@ import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { GraduationCap, Eye, EyeOff, LogIn, ShieldCheck } from 'lucide-react'
 
+const ADMIN_PREFILL = { identifier: 'admin@sbit.edu', password: 'Admin@SBIT2025' }
+const STUDENT_PREFILL = { identifier: 'SBIT20260001', password: 'vishnu@123' }
+
 export default function Login() {
   const [mode, setMode] = useState('student') // 'student' | 'admin'
-  const [form, setForm] = useState({ identifier: '', password: '' })
+  const [form, setForm] = useState({ ...STUDENT_PREFILL })
   const [showPwd, setShowPwd] = useState(false)
   const [loading, setLoading] = useState(false)
   const { login } = useAuth()
@@ -78,7 +81,10 @@ export default function Login() {
               {['student', 'admin'].map(m => (
                 <button
                   key={m}
-                  onClick={() => { setMode(m); setForm({ identifier: '', password: '' }) }}
+                  onClick={() => {
+                    setMode(m)
+                    setForm(m === 'admin' ? { ...ADMIN_PREFILL } : { ...STUDENT_PREFILL })
+                  }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${
                     mode === m
                       ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'

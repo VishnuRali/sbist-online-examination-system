@@ -4,7 +4,7 @@ const { studentOnly } = require('../middleware/auth');
 const { examLimiter } = require('../middleware/rateLimiter');
 const {
   getAvailableExams, startExam, saveProgress, reportViolation,
-  submitExam, submitSubjectAndContinue, getStudentResult, getStudentAllResults,
+  submitExam, switchSubject, submitSubjectAndContinue, getStudentResult, getStudentAllResults,
   updateStudentProfile
 } = require('../controllers/studentController');
 
@@ -13,7 +13,8 @@ router.post('/exams/:examId/start', studentOnly, examLimiter, startExam);
 router.post('/exams/save-progress', studentOnly, saveProgress);
 router.post('/exams/violation', studentOnly, reportViolation);
 router.post('/exams/submit', studentOnly, submitExam);
-// Multi-subject: submit current subject and get next
+router.post('/exams/switch-subject', studentOnly, switchSubject);
+// Multi-subject legacy: submit current subject and get next
 router.post('/exams/submit-subject', studentOnly, submitSubjectAndContinue);
 router.get('/exams/:examId/result', studentOnly, getStudentResult);
 router.get('/results', studentOnly, getStudentAllResults);

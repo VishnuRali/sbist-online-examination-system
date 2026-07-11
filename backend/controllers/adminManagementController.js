@@ -844,6 +844,7 @@ const testSettings = async (req, res) => {
   }
 };
 
+
 const getLiveMonitorData = async (req, res) => {
   try {
     const { departmentId, year, semester, section, examId } = req.query;

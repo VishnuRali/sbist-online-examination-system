@@ -3,6 +3,7 @@ const router = express.Router();
 const { adminOnly } = require('../middleware/auth');
 const {
   getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
+  regenerateAccessCode,
   getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
   getQuestions, addQuestion, updateQuestion, deleteQuestion,
   bulkUploadQuestions, downloadQuestionTemplate,
@@ -18,6 +19,7 @@ router.put('/:id', adminOnly, updateExam);
 router.delete('/:id', adminOnly, deleteExam);
 router.patch('/:id/publish', adminOnly, publishExam);
 router.post('/:id/publish/retry', adminOnly, retryPublishNotifications);
+router.post('/:id/regenerate-access-code', adminOnly, regenerateAccessCode);
 
 // ── Multi-subject management ──────────────────────────────────────────────────
 router.get('/:examId/subjects', adminOnly, getExamSubjects);

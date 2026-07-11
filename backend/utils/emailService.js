@@ -374,6 +374,7 @@ const parseSmtpError = (error) => {
   return msg;
 };
 
+
 // ==================== SEND FUNCTIONS ====================
 
 const sendWelcomeEmail = async (student, exam = null) => {
@@ -629,6 +630,7 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
       code: error.code,
       command: error.command,
       selfSignedIssue,
+
       stack: error.stack 
     };
   }
