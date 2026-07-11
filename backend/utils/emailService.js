@@ -642,56 +642,40 @@ const retryAllFailedLogs = async () => {
 
 const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => {
   try {
-    const transporter = createTransporter(testUser, testPass);
-    await transporter.verify();
-
-    if (recipientEmail) {
-      const portalConfig = await getGmailConfig();
-      const info = await transporter.sendMail({
-        from: `"SBIT SMTP Test" <${testUser}>`,
-        to: recipientEmail,
-        subject: 'SBIT Exam Portal — SMTP Integration Test',
-        text: 'This is a verification email from your SBIT Exam Portal. If you received this, your SMTP email connection is fully working!',
-        html: `
-          <div style="font-family: sans-serif; padding: 24px; border: 1px solid #e2e8f0; border-radius: 12px; max-width: 500px; margin: auto; background-color: #ffffff;">
-            <h2 style="color: #4f46e5; margin-top: 0; font-size: 20px;">🎉 SMTP Connection Successful!</h2>
-            <p style="color: #334155; font-size: 14px; line-height: 1.5;">This is an automated verification email from the <strong>SBIT Online Examination Portal</strong>.</p>
-            <p style="color: #475569; font-size: 13px; line-height: 1.5; background-color: #f8fafc; padding: 12px; border-radius: 8px;">
-              Your SMTP credentials have been successfully authenticated. The system is now ready to send automated welcome messages and examination reminders.
-            </p>
-            <hr style="border: 0; border-top: 1px solid #e2e8f0; margin: 20px 0;" />
-            <p style="color: #94a3b8; font-size: 11px; margin: 0;">Sent to: ${recipientEmail}</p>
-            <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0;">Portal URL: ${portalConfig.portalUrl}</p>
-            <p style="color: #94a3b8; font-size: 11px; margin: 4px 0 0 0;">Timestamp: ${new Date().toLocaleString('en-IN')}</p>
-          </div>
-        `
-      });
-
+    if (!process.env.BREVO_API_KEY) {
       return {
-        success: true,
-        messageId: info.messageId,
-        response: info.response,
-        envelope: info.envelope
+        success: false,
+        reason: 'BREVO_API_KEY is not configured in Render'
       };
     }
 
-    return { success: true };
-  } catch (error) {
-    console.error('[SMTP] Connection verify failed:', error);
-
-    let selfSignedIssue = false;
-    if (error.message && error.message.includes('self-signed certificate')) {
-      selfSignedIssue = true;
+    if (recipientEmail) {
+      await sendWithBrevo({
+        to: recipientEmail,
+        subject: 'SBIT Exam Portal — Brevo Email Test',
+        html: `
+          <div style="font-family: sans-serif; padding: 24px; max-width: 500px; margin: auto;">
+            <h2>✅ Brevo Email Connection Successful</h2>
+            <p>This test email was sent successfully from the SBIT Online Examination Portal.</p>
+            <p>Your Brevo email service is working correctly.</p>
+          </div>
+        `
+      });
     }
 
     return {
-      success: false,
-      reason: parseSmtpError(error),
-      code: error.code,
-      command: error.command,
-      selfSignedIssue,
+      success: true,
+      message: recipientEmail
+        ? 'Brevo test email sent successfully'
+        : 'Brevo API is configured'
+    };
+  } catch (error) {
+    console.error('[Brevo] Test email failed:', error);
 
-      stack: error.stack
+    return {
+      success: false,
+      reason: error.message,
+      code: error.response?.statusCode || error.status || 'BREVO_ERROR'
     };
   }
 };
