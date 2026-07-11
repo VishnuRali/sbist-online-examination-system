@@ -5,13 +5,6 @@ const Student = require('../models/Student');
 const { shuffleArray, generateAccessCode } = require('../utils/generateId');
 const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER: resolve a student's displayed answer key back to the original key
-// when randomizeOptions was active. The optionMappings map is:
-//   { questionId -> { displayKey -> originalKey } }
-// e.g. if option A in display is actually original option C:
-//   mapping['A'] = 'C'
-// ─────────────────────────────────────────────────────────────────────────────
 const resolveOriginalAnswer = (questionId, displayKey, optionMappings) => {
   if (!displayKey) return null;
   const normalized = displayKey.trim().toUpperCase();
@@ -38,7 +31,6 @@ const mapToObject = (value) => {
   return {};
 };
 
-/** Shared exam timer: sum of subject durations (multi) or exam.duration (single), capped by endTime. */
 const getSharedRemainingSeconds = (exam, result, now = new Date()) => {
   const endTime = new Date(exam.endTime);
   const isMulti = exam.examType === 'multi' && Array.isArray(exam.subjects) && exam.subjects.length > 0;
@@ -50,10 +42,6 @@ const getSharedRemainingSeconds = (exam, result, now = new Date()) => {
   return Math.max(0, Math.floor((effectiveEnd - now) / 1000));
 };
 
-/**
- * Prepare questions for a subject. Reuses existing optionMappings when present
- * so revisiting a subject does not reshuffle and invalidate saved answers.
- */
 const prepareQuestionsForSubject = (questions, exam, existingMappingsObj = {}) => {
   const newMappings = {};
   let list = questions;
@@ -100,9 +88,6 @@ const prepareQuestionsForSubject = (questions, exam, existingMappingsObj = {}) =
   return { preparedQuestions, newMappings };
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// HELPER: get a saved answer from the Map (handles both Map and plain object)
-// ─────────────────────────────────────────────────────────────────────────────
 const getSavedAnswer = (savedAnswers, questionId) => {
   const qIdStr = questionId.toString();
   if (!savedAnswers) return null;
@@ -110,9 +95,6 @@ const getSavedAnswer = (savedAnswers, questionId) => {
   return savedAnswers[qIdStr] || null;
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Get available exams for student
-// ─────────────────────────────────────────────────────────────────────────────
 const getAvailableExams = async (req, res) => {
   try {
     const now = new Date();
@@ -165,8 +147,6 @@ const getAvailableExams = async (req, res) => {
       const examSemester = normalizeNumberString(exam.semester);
       const examSection = normalizeSection(exam.section);
       const examStatus = normalizeString(exam.status);
-      const examStart = new Date(exam.startTime);
-      const examEnd = new Date(exam.endTime);
 
       const reasons = [];
       if (!examDepartmentId || student.departmentId !== examDepartmentId) {
@@ -192,7 +172,7 @@ const getAvailableExams = async (req, res) => {
       const statusMatches = ['scheduled', 'active'].includes(examStatus);
       if (!statusMatches) reasons.push('Status mismatch');
 
-      if (now > examEnd) {
+      if (now > new Date(exam.endTime)) {
         reasons.push('Exam ended');
       }
 
@@ -228,9 +208,6 @@ const getAvailableExams = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Start exam
-// ─────────────────────────────────────────────────────────────────────────────
 const startExam = async (req, res) => {
   try {
     const student = req.student;
@@ -243,7 +220,6 @@ const startExam = async (req, res) => {
     if (now < new Date(exam.startTime)) return res.status(403).json({ success: false, message: 'Exam has not started yet' });
     if (now > new Date(exam.endTime)) return res.status(403).json({ success: false, message: 'Exam time has ended' });
 
-    // Check if already completed
     const existingCompleted = await Result.findOne({
       student: student._id, exam: examId,
       status: { $in: ['submitted', 'force_submitted', 'auto_submitted'] }
@@ -252,25 +228,17 @@ const startExam = async (req, res) => {
       return res.status(403).json({ success: false, message: 'You have already submitted this exam' });
     }
 
-    // Check for in-progress (resume)
     let result = await Result.findOne({ student: student._id, exam: examId, status: 'in_progress' });
 
     // Access code required only on first start (no in-progress Result yet)
     if (!result) {
       const submittedCode = String(req.body.accessCode || '').trim();
-      if (!exam.accessCode) {
-        exam.accessCode = generateAccessCode();
-        await exam.save();
-      }
-      if (!submittedCode || submittedCode !== String(exam.accessCode).trim()) {
+      if (!exam.accessCode || !submittedCode || submittedCode !== String(exam.accessCode).trim()) {
         return res.status(401).json({ success: false, message: 'Invalid access code' });
       }
     }
 
     const isMulti = exam.examType === 'multi' && exam.subjects.length > 0;
-
-    // For single-subject: load all questions
-    // For multi-subject: load questions for the current subject
     const currentSubjectIndex = result?.savedProgress?.currentSubjectIndex || 0;
 
     let questions;
@@ -315,7 +283,6 @@ const startExam = async (req, res) => {
       await result.save();
     }
 
-    // Update student's current exam
     await Student.findByIdAndUpdate(student._id, { currentExam: examId });
 
     const totalDurationMinutes = isMulti
@@ -358,9 +325,6 @@ const startExam = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Save progress (auto-save)
-// ─────────────────────────────────────────────────────────────────────────────
 const saveProgress = async (req, res) => {
   try {
     const { resultId, answers, currentQuestion, reviewList, currentSubjectIndex } = req.body;
@@ -373,7 +337,6 @@ const saveProgress = async (req, res) => {
     const existingAnswers = mapToObject(result.savedProgress?.answers);
     const incoming = answers || {};
     const mergedAnswers = { ...existingAnswers, ...incoming };
-    // Allow clears: null/empty values remove the key
     Object.keys(incoming).forEach((key) => {
       if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
     });
@@ -401,9 +364,6 @@ const saveProgress = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Switch subject (multi-subject free navigation)
-// ─────────────────────────────────────────────────────────────────────────────
 const switchSubject = async (req, res) => {
   try {
     const { resultId, subjectIndex, answers, reviewList, currentQuestion } = req.body;
@@ -440,7 +400,6 @@ const switchSubject = async (req, res) => {
     );
     const mergedMappings = { ...existingMappingsObj, ...newMappings };
 
-    // Track visited subjects (not locked — still editable)
     const completedSubjects = [...(result.savedProgress?.completedSubjects || [])];
     const prevIdx = result.savedProgress?.currentSubjectIndex;
     if (prevIdx !== undefined && prevIdx !== targetIdx && !completedSubjects.includes(prevIdx)) {
@@ -476,10 +435,6 @@ const switchSubject = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Submit current subject and get next subject's questions (multi-subject only)
-// Kept for backward compatibility; UI now uses switch-subject + final submit.
-// ─────────────────────────────────────────────────────────────────────────────
 const submitSubjectAndContinue = async (req, res) => {
   try {
     const { resultId, answers, reviewList, subjectIndex } = req.body;
@@ -497,7 +452,6 @@ const submitSubjectAndContinue = async (req, res) => {
     const currentIdx = subjectIndex !== undefined ? parseInt(subjectIndex) : (result.savedProgress?.currentSubjectIndex || 0);
     const nextIdx = currentIdx + 1;
 
-    // Merge new answers into savedProgress
     const existingAnswers = result.savedProgress?.answers
       ? Object.fromEntries(
         typeof result.savedProgress.answers.entries === 'function'
@@ -509,7 +463,6 @@ const submitSubjectAndContinue = async (req, res) => {
 
     const existingMappings = result.savedProgress?.optionMappings;
 
-    // Mark current subject as completed
     const completedSubjects = [...(result.savedProgress?.completedSubjects || [])];
     if (!completedSubjects.includes(currentIdx)) {
       completedSubjects.push(currentIdx);
@@ -518,7 +471,6 @@ const submitSubjectAndContinue = async (req, res) => {
     const isLastSubject = nextIdx >= exam.subjects.length;
 
     if (isLastSubject) {
-      // All subjects done — trigger final submission
       result.savedProgress = {
         answers: mergedAnswers,
         reviewList: reviewList || [],
@@ -533,11 +485,9 @@ const submitSubjectAndContinue = async (req, res) => {
       return submitExamLogic(result, exam, res, 'submitted');
     }
 
-    // Load next subject's questions
     let nextQuestions = await Question.find({ exam: exam._id, subjectIndex: nextIdx });
     if (exam.randomizeQuestions) nextQuestions = shuffleArray(nextQuestions);
 
-    // Build optionMappings for next subject's questions
     const newMappings = {};
     const preparedQuestions = nextQuestions.map(q => {
       const qObj = {
@@ -566,7 +516,6 @@ const submitSubjectAndContinue = async (req, res) => {
       return qObj;
     });
 
-    // Merge new mappings with existing
     const existingMappingsObj = existingMappings
       ? Object.fromEntries(
         typeof existingMappings.entries === 'function'
@@ -606,9 +555,6 @@ const submitSubjectAndContinue = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Report violation
-// ─────────────────────────────────────────────────────────────────────────────
 const reportViolation = async (req, res) => {
   try {
     const { resultId, violationType } = req.body;
@@ -641,9 +587,6 @@ const reportViolation = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Submit exam (final submission)
-// ─────────────────────────────────────────────────────────────────────────────
 const submitExam = async (req, res) => {
   try {
     const { resultId, answers, reviewList } = req.body;
@@ -674,14 +617,12 @@ const submitExam = async (req, res) => {
       });
     }
 
-    // Merge submitted answers with existing saved answers
     const existingAnswers = mapToObject(result.savedProgress?.answers);
     const incoming = answers || {};
     const mergedAnswers = { ...existingAnswers, ...incoming };
     Object.keys(incoming).forEach((key) => {
       if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
     });
-    // Strip any lingering nulls from existing
     Object.keys(mergedAnswers).forEach((key) => {
       if (mergedAnswers[key] == null || mergedAnswers[key] === '') delete mergedAnswers[key];
     });
@@ -706,10 +647,6 @@ const submitExam = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// CRITICAL FIX: Evaluate and finalize exam submission
-// Uses optionMappings to correctly resolve randomized option selections
-// ─────────────────────────────────────────────────────────────────────────────
 const submitExamLogic = async (result, exam, res, submitStatus) => {
   try {
     const dbResult = await Result.findById(result._id);
@@ -755,7 +692,6 @@ const submitExamLogic = async (result, exam, res, submitStatus) => {
     dbResult.subjectResults = evaluation.subjectResults;
     await dbResult.save();
 
-    // Clear the student's current exam reference
     await Student.findByIdAndUpdate(dbResult.student, { currentExam: null });
 
     res.json({
@@ -781,9 +717,6 @@ const submitExamLogic = async (result, exam, res, submitStatus) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Get student's result for a specific exam
-// ─────────────────────────────────────────────────────────────────────────────
 const getStudentResult = async (req, res) => {
   try {
     const result = await Result.findOne({
@@ -809,9 +742,6 @@ const getStudentResult = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Get all results for student
-// ─────────────────────────────────────────────────────────────────────────────
 const getStudentAllResults = async (req, res) => {
   try {
     const results = await Result.find({
@@ -826,9 +756,6 @@ const getStudentAllResults = async (req, res) => {
   }
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Update student profile
-// ─────────────────────────────────────────────────────────────────────────────
 const updateStudentProfile = async (req, res) => {
   try {
     const { mobile, currentPassword, newPassword } = req.body;
