@@ -2,7 +2,7 @@ const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '../.env') });
 
 const nodemailer = require('nodemailer');
-const brevo = require('@getbrevo/brevo');
+const Brevo = require('@getbrevo/brevo');
 const EmailLog = require('../models/EmailLog');
 const Settings = require('../models/Settings');
 
@@ -29,44 +29,45 @@ const sendWithBrevo = async ({ to, subject, html, text }) => {
     );
   }
 
-  const apiInstance = new brevo.TransactionalEmailsApi();
-
-  apiInstance.setApiKey(
-    brevo.TransactionalEmailsApiApiKeys.apiKey,
-    apiKey
+  const response = await fetch(
+    'https://api.brevo.com/v3/smtp/email',
+    {
+      method: 'POST',
+      headers: {
+        accept: 'application/json',
+        'api-key': apiKey,
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify({
+        sender: {
+          name: senderName,
+          email: senderEmail
+        },
+        to: [
+          {
+            email: to
+          }
+        ],
+        subject: subject,
+        htmlContent: html,
+        ...(text ? { textContent: text } : {})
+      })
+    }
   );
 
-  const email = new brevo.SendSmtpEmail();
+  const data = await response.json();
 
-  email.sender = {
-    name: senderName,
-    email: senderEmail
-  };
-
-  email.to = [
-    {
-      email: to
-    }
-  ];
-
-  email.subject = subject;
-  email.htmlContent = html;
-
-  if (text) {
-    email.textContent = text;
+  if (!response.ok) {
+    throw new Error(
+      data.message || `Brevo API request failed with status ${response.status}`
+    );
   }
-
-  const response = await apiInstance.sendTransacEmail(email);
 
   return {
     success: true,
-    messageId:
-      response?.body?.messageId ||
-      response?.messageId ||
-      'Brevo email accepted'
+    messageId: data.messageId || 'Brevo email accepted'
   };
 };
-
 
 // Helper to load Gmail credentials from DB or Env
 const getGmailConfig = async () => {
