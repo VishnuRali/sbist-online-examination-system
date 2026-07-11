@@ -549,39 +549,43 @@ const sendReminderEmail = async (student, exam, type) => {
 const retryEmailLog = async (log) => {
   const Student = require('../models/Student');
   const Exam = require('../models/Exam');
-  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
+  const { portalUrl } = await getGmailConfig();
 
-  // ONLY retry if status is failed
+  // Only retry failed emails
   if (log.status !== 'failed') {
-    return { success: false, error: 'Email log is not in failed status' };
+    return {
+      success: false,
+      error: 'Email log is not in failed status'
+    };
   }
 
   log.status = 'pending';
   await log.save();
 
-  if (!user || !pass) {
-    log.status = 'failed';
-    log.errorMessage = 'SMTP credentials not configured in settings/env';
-    await log.save();
-    return { success: false, error: log.errorMessage };
-  }
-
   const student = await Student.findById(log.student).populate('department');
-  const exam = log.exam ? await Exam.findById(log.exam).populate('subject department') : null;
+
+  const exam = log.exam
+    ? await Exam.findById(log.exam).populate('subject department')
+    : null;
 
   if (!student) {
     log.status = 'failed';
     log.errorMessage = 'Student not found in database';
     await log.save();
-    return { success: false, error: 'Student not found' };
+
+    return {
+      success: false,
+      error: 'Student not found'
+    };
   }
 
-  log.attempts += 1;
+  log.attempts = (log.attempts || 0) + 1;
   log.retried = true;
   log.attemptedAt = new Date();
 
   try {
     let html = '';
+
     if (log.type === 'welcome') {
       html = getWelcomeEmailHTML(student, portalUrl);
     } else {
@@ -589,38 +593,65 @@ const retryEmailLog = async (log) => {
         log.status = 'failed';
         log.errorMessage = 'Exam not found in database';
         await log.save();
-        return { success: false, error: 'Exam not found' };
+
+        return {
+          success: false,
+          error: 'Exam not found'
+        };
       }
-      html = getReminderEmailHTML(student, exam, log.type, portalUrl);
+
+      html = getReminderEmailHTML(
+        student,
+        exam,
+        log.type,
+        portalUrl
+      );
     }
 
-    const transporter = createTransporter(user, pass, { host, port, secure });
-    await transporter.verify();
-    await transporter.sendMail({
-      from: `"SBIT Examinations" <${user}>`,
+    // Send using Brevo HTTPS API instead of Gmail SMTP
+    const result = await sendWithBrevo({
       to: log.to,
       subject: log.subject,
-      html,
+      html
     });
 
     log.status = 'sent';
     log.sentAt = new Date();
     log.errorMessage = '';
     log.nextAttemptAt = null;
+
+    if (result.messageId) {
+      log.messageId = result.messageId;
+    }
+
     await log.save();
-    return { success: true };
+
+    return {
+      success: true,
+      messageId: result.messageId
+    };
+
   } catch (error) {
     log.status = 'failed';
-    log.errorMessage = parseSmtpError(error);
+    log.errorMessage = error.message || 'Brevo email retry failed';
 
     if (log.attempts < 4) {
-      const backoffMinutes = [0, 1, 5, 15][log.attempts] || 15;
-      log.nextAttemptAt = new Date(Date.now() + backoffMinutes * 60000);
+      const backoffMinutes =
+        [0, 1, 5, 15][log.attempts] || 15;
+
+      log.nextAttemptAt = new Date(
+        Date.now() + backoffMinutes * 60000
+      );
     } else {
       log.nextAttemptAt = null;
     }
+
     await log.save();
-    return { success: false, error: log.errorMessage };
+
+    return {
+      success: false,
+      error: log.errorMessage
+    };
   }
 };
 
