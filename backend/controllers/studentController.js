@@ -211,7 +211,7 @@ const getAvailableExams = async (req, res) => {
     }).select('exam').lean();
 
     const enrichedExams = filteredExams.map(exam => {
-      const { accessCode, ...safeExam } = exam;
+      const safeExam = { ...exam };
       return {
         ...safeExam,
         isCompleted: completedExamIds.includes(exam._id.toString()),
