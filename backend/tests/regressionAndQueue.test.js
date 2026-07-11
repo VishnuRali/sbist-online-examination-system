@@ -29,10 +29,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     await mongoose.connect(uri);
   });
 
-  t.beforeEach(async () => {
-    // Optional: add beforeEach hooks if needed
-  });
-
   t.after(async () => {
     await mongoose.disconnect();
     await mongoServer.stop();
@@ -72,7 +68,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
 
     const query = await buildStudentEligibilityQuery(mockExam, { target: 'all' });
     
-    // Check that section check is not enforced/undefined for ALL wildcard
     assert.strictEqual(query.section, undefined);
     assert.deepStrictEqual(query.department, deptId);
     assert.strictEqual(query.year, '4');
@@ -80,7 +75,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
   });
 
   await t.test('Database-level tests (Students & Exams)', async () => {
-    // Clean up
     await Student.deleteMany({});
     await Exam.deleteMany({});
     await EmailQueue.deleteMany({});
@@ -89,10 +83,8 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     const Admin = require('../models/Admin');
     await Admin.deleteMany({});
 
-    // Seed department first
     const dept = await Department.create({ name: 'Computer Science and Engineering', code: 'CSE', isActive: true });
 
-    // Seed admin with department field
     const admin = await Admin.create({
       name: 'Test Admin',
       employeeId: 'EMP001',
@@ -132,14 +124,13 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
       isActive: true
     });
 
-    // 1. All Sections Exam eligibility
     const examAll = await Exam.create({
       title: 'CSE All Sections Exam',
       department: dept._id,
       year: '4',
       semester: '1',
       sections: ['ALL'],
-      startTime: new Date(Date.now() - 3600000), // Active
+      startTime: new Date(Date.now() - 3600000),
       endTime: new Date(Date.now() + 3600000),
       totalMarks: 100,
       passMarks: 40,
@@ -152,16 +143,15 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
 
     const queryAll = await buildStudentEligibilityQuery(examAll, { target: 'all' });
     const eligibleAll = await Student.find(queryAll);
-    assert.strictEqual(eligibleAll.length, 2); // Both A and B are eligible
+    assert.strictEqual(eligibleAll.length, 2);
 
-    // 2. Section B only Exam eligibility
     const examB = await Exam.create({
       title: 'CSE Section B Exam',
       department: dept._id,
       year: '4',
       semester: '1',
       sections: ['B'],
-      startTime: new Date(Date.now() - 3600000), // Active
+      startTime: new Date(Date.now() - 3600000),
       endTime: new Date(Date.now() + 3600000),
       totalMarks: 100,
       passMarks: 40,
@@ -177,15 +167,13 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     assert.strictEqual(eligibleB.length, 1);
     assert.strictEqual(eligibleB[0].section, 'B');
 
-    // 3. Time Filtering: Active exam vs Upcoming vs Expired
-    // Upcoming exam
     const examUpcoming = await Exam.create({
       title: 'CSE Upcoming Exam',
       department: dept._id,
       year: '4',
       semester: '1',
       sections: ['ALL'],
-      startTime: new Date(Date.now() + 3600000), // 1 hour later
+      startTime: new Date(Date.now() + 3600000),
       endTime: new Date(Date.now() + 7200000),
       totalMarks: 100,
       passMarks: 40,
@@ -196,7 +184,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
       accessCode: '333333'
     });
 
-    // Expired exam
     const examExpired = await Exam.create({
       title: 'CSE Expired Exam',
       department: dept._id,
@@ -204,7 +191,7 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
       semester: '1',
       sections: ['ALL'],
       startTime: new Date(Date.now() - 7200000), 
-      endTime: new Date(Date.now() - 3600000), // Expired
+      endTime: new Date(Date.now() - 3600000),
       totalMarks: 100,
       passMarks: 40,
       duration: 60,
@@ -214,7 +201,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
       accessCode: '444444'
     });
 
-    // Mock studentController getAvailableExams logic
     const getVisibleExams = async (student) => {
       const allExams = await Exam.find({
         status: { $in: ['scheduled', 'active'] },
@@ -235,7 +221,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     };
 
     const visibleExams = await getVisibleExams(studentB);
-    // Should include CSE All Sections Exam, CSE Section B Exam, and CSE Upcoming Exam. Excludes CSE Expired Exam.
     assert.strictEqual(visibleExams.length, 3);
     const visibleTitles = visibleExams.map(e => e.title);
     assert.ok(visibleTitles.includes('CSE All Sections Exam'));
@@ -249,7 +234,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     const exam = await Exam.findOne({ title: 'CSE All Sections Exam' });
     const student = await Student.findOne({ section: 'B' });
 
-    // 1. Queue a job
     const job = await EmailQueue.create({
       exam: exam._id,
       student: student._id,
@@ -261,7 +245,6 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
 
     assert.strictEqual(job.status, 'queued');
 
-    // 2. Prevent duplicate notifications via index
     try {
       await EmailQueue.create({
         exam: exam._id,
@@ -276,10 +259,8 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
       assert.ok(err.code === 11000 || err.message.includes('duplicate'));
     }
 
-    // 3. Stale job recovery test
     await EmailQueue.updateOne({ _id: job._id }, { $set: { status: 'processing', processingStartedAt: new Date(Date.now() - 600000) } });
     
-    // Simulate server restart recovery
     const resetStaleJobs = async () => {
       return await EmailQueue.updateMany(
         { status: 'processing' },
@@ -395,5 +376,95 @@ test('Unified Regression and Asynchronous Email Queue Tests', async (t) => {
     assert.ok(log);
     assert.strictEqual(log.status, 'failed');
     assert.strictEqual(log.errorMessage, 'Invalid SMTP credentials');
+  });
+
+  await t.test('SMTP Settings Encryption, Decryption, and Normalization', async () => {
+    const Settings = require('../models/Settings');
+    const { encrypt, decrypt } = require('../utils/crypto');
+    await Settings.deleteMany({});
+
+    // Test encryption/decryption helpers
+    const rawPass = 'abcd efgh ijkl mnop';
+    const encrypted = encrypt(rawPass.replace(/\s+/g, ''));
+    assert.ok(encrypted.includes(':'));
+    const decrypted = decrypt(encrypted);
+    assert.strictEqual(decrypted, 'abcdefghijklmnop');
+
+    // Save Settings
+    const settings = new Settings({
+      gmailUser: 'test@gmail.com',
+      gmailAppPassword: encrypted,
+      examPortalUrl: 'http://localhost:5173'
+    });
+    await settings.save();
+
+    // Verify it is encrypted in DB
+    const stored = await Settings.findOne();
+    assert.ok(stored.gmailAppPassword.includes(':'));
+    assert.notStrictEqual(stored.gmailAppPassword, 'abcdefghijklmnop');
+
+    // Retrieve via decrypt
+    const configPass = decrypt(stored.gmailAppPassword);
+    assert.strictEqual(configPass, 'abcdefghijklmnop');
+  });
+
+  await t.test('Access Code Stability, GET Isolation & Regenerate Tests', async () => {
+    const Exam = require('../models/Exam');
+    const { regenerateAccessCode } = require('../controllers/examController');
+    const admin = await mongoose.model('Admin').findOne({ email: 'admin@example.com' });
+    const dept = await Department.findOne({ code: 'CSE' });
+
+    // Clear and create a new test exam
+    await Exam.deleteMany({});
+    const exam = await Exam.create({
+      title: 'CSE Isolation Test Exam',
+      department: dept._id,
+      year: '4',
+      semester: '1',
+      sections: ['ALL'],
+      startTime: new Date(Date.now() - 3600000),
+      endTime: new Date(Date.now() + 3600000),
+      totalMarks: 100,
+      passMarks: 40,
+      duration: 60,
+      status: 'active',
+      questions: [],
+      createdBy: admin._id,
+      accessCode: '555555'
+    });
+
+    // Verify code starts as '555555'
+    let fetched = await Exam.findById(exam._id);
+    assert.strictEqual(fetched.accessCode, '555555');
+
+    // Simulate 5 page refreshes (GET route fetches)
+    for (let i = 0; i < 5; i++) {
+      const all = await Exam.find({}).lean();
+      assert.strictEqual(all[0].accessCode, '555555');
+    }
+
+    // Test Regenerate
+    const reqMock = { params: { id: exam._id } };
+    let jsonOutput = null;
+    const resMock = {
+      json: (data) => { jsonOutput = data; },
+      status: function() { return this; }
+    };
+    
+    await regenerateAccessCode(reqMock, resMock);
+    assert.ok(jsonOutput);
+    assert.strictEqual(jsonOutput.success, true);
+    assert.notStrictEqual(jsonOutput.accessCode, '555555');
+    assert.ok(/^\d{6}$/.test(jsonOutput.accessCode));
+
+    // Verify it is saved in the database
+    const finalFetched = await Exam.findById(exam._id);
+    assert.strictEqual(finalFetched.accessCode, jsonOutput.accessCode);
+
+    // Verify multiple GET refreshes still keep the new regenerated code
+    for (let i = 0; i < 5; i++) {
+      const all = await Exam.find({}).lean();
+      assert.strictEqual(all[0].accessCode, jsonOutput.accessCode);
+    }
   });
 });
