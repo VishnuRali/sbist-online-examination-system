@@ -331,9 +331,66 @@ const retrySingleEmail = async (req, res) => {
 const retryAllFailedEmails = async (req, res) => {
   try {
     const result = await retryAllFailedLogs();
+    
+    // Also retry failed queue jobs
+    const EmailQueue = require('../models/EmailQueue');
+    const queueResult = await EmailQueue.updateMany(
+      { status: 'failed' },
+      { $set: { status: 'queued', retryCount: 0, nextRetryTime: new Date() } }
+    );
+
     res.json({
       success: true,
-      message: `Retry process complete. Sent: ${result.successCount}, Failed: ${result.failCount} (Total: ${result.total})`
+      message: `Retry process complete. Legacy sent: ${result.successCount}, failed: ${result.failCount}. Background queue retries reset: ${queueResult.modifiedCount}.`
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+const getEmailQueueProgress = async (req, res) => {
+  try {
+    const { examId } = req.query;
+    const query = {};
+    if (examId) query.exam = examId;
+
+    const EmailQueue = require('../models/EmailQueue');
+    const statsResult = await EmailQueue.aggregate([
+      { $match: query },
+      {
+        $group: {
+          _id: null,
+          total: { $sum: 1 },
+          queued: { $sum: { $cond: [{ $eq: ['$status', 'queued'] }, 1, 0] } },
+          processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
+          sent: { $sum: { $cond: [{ $eq: ['$status', 'sent'] }, 1, 0] } },
+          failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
+        }
+      }
+    ]);
+
+    const stats = statsResult[0] || {
+      total: 0,
+      queued: 0,
+      processing: 0,
+      sent: 0,
+      failed: 0,
+    };
+
+    const completedPercent = stats.total > 0
+      ? Math.round((stats.sent / stats.total) * 100)
+      : 0;
+
+    res.json({
+      success: true,
+      progress: {
+        total: stats.total,
+        queued: stats.queued,
+        processing: stats.processing,
+        sent: stats.sent,
+        failed: stats.failed,
+        percentage: completedPercent,
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -933,5 +990,6 @@ module.exports = {
   retrySingleEmail, retryAllFailedEmails,
   exportFailedEmailLogs,
   previewRecipientCount,
-  getLiveMonitorData
+  getLiveMonitorData,
+  getEmailQueueProgress
 };

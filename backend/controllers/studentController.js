@@ -2,7 +2,7 @@ const Exam = require('../models/Exam');
 const Question = require('../models/Question');
 const Result = require('../models/Result');
 const Student = require('../models/Student');
-const { shuffleArray } = require('../utils/generateId');
+const { shuffleArray, generateAccessCode } = require('../utils/generateId');
 const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -29,6 +29,77 @@ const resolveOriginalAnswer = (questionId, displayKey, optionMappings) => {
   return (mapping[normalized] || normalized).trim().toUpperCase();
 };
 
+const mapToObject = (value) => {
+  if (!value) return {};
+  if (typeof value.entries === 'function') {
+    return Object.fromEntries(value.entries());
+  }
+  if (typeof value === 'object') return { ...value };
+  return {};
+};
+
+/** Shared exam timer: sum of subject durations (multi) or exam.duration (single), capped by endTime. */
+const getSharedRemainingSeconds = (exam, result, now = new Date()) => {
+  const endTime = new Date(exam.endTime);
+  const isMulti = exam.examType === 'multi' && Array.isArray(exam.subjects) && exam.subjects.length > 0;
+  const durationMs = isMulti
+    ? exam.subjects.reduce((sum, s) => sum + (Number(s.duration) || 0), 0) * 60000
+    : (Number(exam.duration) || 60) * 60000;
+  const examEndByDuration = new Date(new Date(result.startedAt).getTime() + durationMs);
+  const effectiveEnd = examEndByDuration < endTime ? examEndByDuration : endTime;
+  return Math.max(0, Math.floor((effectiveEnd - now) / 1000));
+};
+
+/**
+ * Prepare questions for a subject. Reuses existing optionMappings when present
+ * so revisiting a subject does not reshuffle and invalidate saved answers.
+ */
+const prepareQuestionsForSubject = (questions, exam, existingMappingsObj = {}) => {
+  const newMappings = {};
+  let list = questions;
+  if (exam.randomizeQuestions) list = shuffleArray(questions);
+
+  const preparedQuestions = list.map((q) => {
+    const qId = q._id.toString();
+    const qObj = {
+      _id: q._id,
+      questionText: q.questionText,
+      marks: q.marks,
+      topic: q.topic,
+      order: q.order,
+      subjectIndex: q.subjectIndex,
+      options: { ...q.options },
+    };
+
+    if (exam.randomizeOptions) {
+      const existing = existingMappingsObj[qId];
+      if (existing && typeof existing === 'object') {
+        const rebuilt = {};
+        Object.entries(existing).forEach(([displayKey, origKey]) => {
+          rebuilt[displayKey] = q.options[origKey];
+        });
+        qObj.options = rebuilt;
+      } else {
+        const optionKeys = ['A', 'B', 'C', 'D'];
+        const shuffledKeys = shuffleArray(optionKeys);
+        const newOptions = {};
+        const qMapping = {};
+        shuffledKeys.forEach((origKey, i) => {
+          const newKey = optionKeys[i];
+          newOptions[newKey] = q.options[origKey];
+          qMapping[newKey] = origKey;
+        });
+        qObj.options = newOptions;
+        newMappings[qId] = qMapping;
+      }
+    }
+
+    return qObj;
+  });
+
+  return { preparedQuestions, newMappings };
+};
+
 // ─────────────────────────────────────────────────────────────────────────────
 // HELPER: get a saved answer from the Map (handles both Map and plain object)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -52,11 +123,17 @@ const getAvailableExams = async (req, res) => {
 
     const normalizeString = (value) => String(value || '').trim().toLowerCase();
     const normalizeNumberString = (value) => String(value || '').replace(/[^0-9]/g, '').trim();
-    const normalizeSection = (value) => String(value || '')
-      .trim()
-      .replace(/section\s*/i, '')
-      .replace(/[^A-Z0-9]/gi, '')
-      .toUpperCase();
+    const normalizeSection = (value) => {
+      const str = String(value || '').trim().toUpperCase();
+      if (str === 'ALL' || str === 'ALL SECTIONS' || str === 'ALL SECTION' || str.startsWith('ALL SEC')) {
+        return 'ALL';
+      }
+      const replaced = str.replace(/SEC(TION)?\s*/i, '').trim();
+      if (replaced === 'ALL' || replaced === 'ALL SECTIONS' || replaced === 'ALL SECTION' || replaced.startsWith('ALL SEC')) {
+        return 'ALL';
+      }
+      return replaced.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+    };
     const getAcronym = (value) => String(value || '')
       .trim()
       .split(/\s+/)
@@ -115,10 +192,8 @@ const getAvailableExams = async (req, res) => {
       const statusMatches = ['scheduled', 'active'].includes(examStatus);
       if (!statusMatches) reasons.push('Status mismatch');
 
-      const timeMatches = now >= examStart && now <= examEnd;
-      if (!timeMatches) {
-        if (now < examStart) reasons.push('Not started yet');
-        if (now > examEnd) reasons.push('Exam ended');
+      if (now > examEnd) {
+        reasons.push('Exam ended');
       }
 
       return reasons.length === 0;
@@ -135,14 +210,17 @@ const getAvailableExams = async (req, res) => {
       status: 'in_progress',
     }).select('exam').lean();
 
-    const enrichedExams = filteredExams.map(exam => ({
-      ...exam,
-      isCompleted: completedExamIds.includes(exam._id.toString()),
-      isInProgress: inProgressResult?.exam?.toString() === exam._id.toString(),
-      isAvailable: now >= new Date(exam.startTime) && now <= new Date(exam.endTime),
-      isUpcoming: now < new Date(exam.startTime),
-      isExpired: now > new Date(exam.endTime),
-    }));
+    const enrichedExams = filteredExams.map(exam => {
+      const { accessCode, ...safeExam } = exam;
+      return {
+        ...safeExam,
+        isCompleted: completedExamIds.includes(exam._id.toString()),
+        isInProgress: inProgressResult?.exam?.toString() === exam._id.toString(),
+        isAvailable: now >= new Date(exam.startTime) && now <= new Date(exam.endTime),
+        isUpcoming: now < new Date(exam.startTime),
+        isExpired: now > new Date(exam.endTime),
+      };
+    });
 
     res.json({ success: true, exams: enrichedExams });
   } catch (error) {
@@ -177,6 +255,18 @@ const startExam = async (req, res) => {
     // Check for in-progress (resume)
     let result = await Result.findOne({ student: student._id, exam: examId, status: 'in_progress' });
 
+    // Access code required only on first start (no in-progress Result yet)
+    if (!result) {
+      const submittedCode = String(req.body.accessCode || '').trim();
+      if (!exam.accessCode) {
+        exam.accessCode = generateAccessCode();
+        await exam.save();
+      }
+      if (!submittedCode || submittedCode !== String(exam.accessCode).trim()) {
+        return res.status(401).json({ success: false, message: 'Invalid access code' });
+      }
+    }
+
     const isMulti = exam.examType === 'multi' && exam.subjects.length > 0;
 
     // For single-subject: load all questions
@@ -190,47 +280,16 @@ const startExam = async (req, res) => {
       questions = await Question.find({ exam: examId });
     }
 
-    if (exam.randomizeQuestions) questions = shuffleArray(questions);
-
-    // ── CRITICAL: Store optionMappings in savedProgress ──────────────────────
-    // For each question, if randomizeOptions is true, build a mapping from
-    // display key → original key so we can correctly evaluate answers on submit.
-    // ─────────────────────────────────────────────────────────────────────────
-    const optionMappings = {}; // { questionId: { displayKey: originalKey } }
-
-    const preparedQuestions = questions.map(q => {
-      const qObj = {
-        _id: q._id,
-        questionText: q.questionText,
-        marks: q.marks,
-        topic: q.topic,
-        order: q.order,
-        subjectIndex: q.subjectIndex,
-        options: { ...q.options },
-      };
-
-      if (exam.randomizeOptions) {
-        const optionKeys = ['A', 'B', 'C', 'D'];
-        const shuffledKeys = shuffleArray(optionKeys);
-        const newOptions = {};
-        const qMapping = {}; // displayKey -> originalKey
-
-        shuffledKeys.forEach((origKey, i) => {
-          const newKey = optionKeys[i];
-          newOptions[newKey] = q.options[origKey];
-          qMapping[newKey] = origKey; // student selects newKey → actual answer is origKey
-        });
-
-        qObj.options = newOptions;
-        // Store mapping for this question
-        optionMappings[q._id.toString()] = qMapping;
-      }
-
-      return qObj;
-    });
+    const existingMappingsObj = result?.savedProgress?.optionMappings
+      ? mapToObject(result.savedProgress.optionMappings)
+      : {};
+    const { preparedQuestions, newMappings: optionMappings } = prepareQuestionsForSubject(
+      questions,
+      exam,
+      existingMappingsObj
+    );
 
     if (!result) {
-      const allQuestionsCount = await Question.countDocuments({ exam: examId });
       const totalMarks = (await Question.find({ exam: examId }))
         .reduce((sum, q) => sum + q.marks, 0);
 
@@ -251,15 +310,7 @@ const startExam = async (req, res) => {
       });
       await result.save();
     } else if (Object.keys(optionMappings).length > 0) {
-      // Merge new optionMappings into existing (for resumed exam, randomize new subject's questions)
-      const existingMappings = result.savedProgress?.optionMappings
-        ? Object.fromEntries(
-          typeof result.savedProgress.optionMappings.entries === 'function'
-            ? result.savedProgress.optionMappings.entries()
-            : Object.entries(result.savedProgress.optionMappings)
-        )
-        : {};
-      result.savedProgress.optionMappings = { ...existingMappings, ...optionMappings };
+      result.savedProgress.optionMappings = { ...existingMappingsObj, ...optionMappings };
       result.markModified('savedProgress');
       await result.save();
     }
@@ -267,17 +318,10 @@ const startExam = async (req, res) => {
     // Update student's current exam
     await Student.findByIdAndUpdate(student._id, { currentExam: examId });
 
-    // Calculate remaining time for current subject
-    const endTime = new Date(exam.endTime);
-    let subjectDuration;
-    if (isMulti) {
-      subjectDuration = (exam.subjects[currentSubjectIndex]?.duration || 60) * 60000;
-    } else {
-      subjectDuration = exam.duration * 60000;
-    }
-    const examEndByDuration = new Date(result.startedAt.getTime() + subjectDuration);
-    const effectiveEndTime = examEndByDuration < endTime ? examEndByDuration : endTime;
-    const remainingSeconds = Math.max(0, Math.floor((effectiveEndTime - now) / 1000));
+    const totalDurationMinutes = isMulti
+      ? exam.subjects.reduce((sum, s) => sum + (Number(s.duration) || 0), 0)
+      : exam.duration;
+    const remainingSeconds = getSharedRemainingSeconds(exam, result, now);
 
     res.json({
       success: true,
@@ -286,7 +330,7 @@ const startExam = async (req, res) => {
         title: exam.title,
         examType: exam.examType,
         subjects: isMulti ? exam.subjects : [],
-        duration: isMulti ? (exam.subjects[currentSubjectIndex]?.duration || 60) : exam.duration,
+        duration: totalDurationMinutes,
         totalMarks: exam.totalMarks,
         instructions: exam.instructions,
         maxViolations: exam.maxViolations,
@@ -299,13 +343,7 @@ const startExam = async (req, res) => {
       result: {
         _id: result._id,
         savedProgress: {
-          answers: result.savedProgress?.answers
-            ? Object.fromEntries(
-              typeof result.savedProgress.answers.entries === 'function'
-                ? result.savedProgress.answers.entries()
-                : Object.entries(result.savedProgress.answers)
-            )
-            : {},
+          answers: mapToObject(result.savedProgress?.answers),
           reviewList: result.savedProgress?.reviewList || [],
           currentQuestion: result.savedProgress?.currentQuestion || 0,
           currentSubjectIndex,
@@ -332,19 +370,29 @@ const saveProgress = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
     }
 
-    // Preserve existing optionMappings while updating the rest
+    const existingAnswers = mapToObject(result.savedProgress?.answers);
+    const incoming = answers || {};
+    const mergedAnswers = { ...existingAnswers, ...incoming };
+    // Allow clears: null/empty values remove the key
+    Object.keys(incoming).forEach((key) => {
+      if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
+    });
+
     const existingMappings = result.savedProgress?.optionMappings;
     const existingCompletedSubjects = result.savedProgress?.completedSubjects || [];
 
     result.savedProgress = {
-      answers: answers || {},
-      reviewList: reviewList || [],
-      currentQuestion: currentQuestion || 0,
-      currentSubjectIndex: currentSubjectIndex !== undefined ? currentSubjectIndex : (result.savedProgress?.currentSubjectIndex || 0),
+      answers: mergedAnswers,
+      reviewList: reviewList || result.savedProgress?.reviewList || [],
+      currentQuestion: currentQuestion !== undefined ? currentQuestion : (result.savedProgress?.currentQuestion || 0),
+      currentSubjectIndex: currentSubjectIndex !== undefined
+        ? currentSubjectIndex
+        : (result.savedProgress?.currentSubjectIndex || 0),
       completedSubjects: existingCompletedSubjects,
       optionMappings: existingMappings,
       lastSaved: new Date(),
     };
+    result.markModified('savedProgress');
     await result.save();
 
     res.json({ success: true, message: 'Progress saved', lastSaved: result.savedProgress.lastSaved });
@@ -354,7 +402,83 @@ const saveProgress = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Switch subject (multi-subject free navigation)
+// ─────────────────────────────────────────────────────────────────────────────
+const switchSubject = async (req, res) => {
+  try {
+    const { resultId, subjectIndex, answers, reviewList, currentQuestion } = req.body;
+
+    const result = await Result.findById(resultId);
+    if (!result || result.status !== 'in_progress') {
+      return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
+    }
+
+    const exam = await Exam.findById(result.exam);
+    if (!exam || exam.examType !== 'multi' || !exam.subjects?.length) {
+      return res.status(400).json({ success: false, message: 'Not a multi-subject exam' });
+    }
+
+    const targetIdx = parseInt(subjectIndex, 10);
+    if (Number.isNaN(targetIdx) || targetIdx < 0 || targetIdx >= exam.subjects.length) {
+      return res.status(400).json({ success: false, message: 'Invalid subject index' });
+    }
+
+    const existingAnswers = mapToObject(result.savedProgress?.answers);
+    const incoming = answers || {};
+    const mergedAnswers = { ...existingAnswers, ...incoming };
+    Object.keys(incoming).forEach((key) => {
+      if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
+    });
+
+    const existingMappingsObj = mapToObject(result.savedProgress?.optionMappings);
+
+    let questions = await Question.find({ exam: exam._id, subjectIndex: targetIdx });
+    const { preparedQuestions, newMappings } = prepareQuestionsForSubject(
+      questions,
+      exam,
+      existingMappingsObj
+    );
+    const mergedMappings = { ...existingMappingsObj, ...newMappings };
+
+    // Track visited subjects (not locked — still editable)
+    const completedSubjects = [...(result.savedProgress?.completedSubjects || [])];
+    const prevIdx = result.savedProgress?.currentSubjectIndex;
+    if (prevIdx !== undefined && prevIdx !== targetIdx && !completedSubjects.includes(prevIdx)) {
+      completedSubjects.push(prevIdx);
+    }
+
+    result.savedProgress = {
+      answers: mergedAnswers,
+      reviewList: reviewList || [],
+      currentQuestion: currentQuestion !== undefined ? currentQuestion : 0,
+      currentSubjectIndex: targetIdx,
+      completedSubjects,
+      optionMappings: mergedMappings,
+      lastSaved: new Date(),
+    };
+    result.markModified('savedProgress');
+    await result.save();
+
+    const remainingSeconds = getSharedRemainingSeconds(exam, result);
+
+    res.json({
+      success: true,
+      currentSubjectIndex: targetIdx,
+      currentSubject: exam.subjects[targetIdx],
+      totalSubjects: exam.subjects.length,
+      questions: preparedQuestions,
+      remainingSeconds,
+      completedSubjects,
+      answers: mergedAnswers,
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Submit current subject and get next subject's questions (multi-subject only)
+// Kept for backward compatibility; UI now uses switch-subject + final submit.
 // ─────────────────────────────────────────────────────────────────────────────
 const submitSubjectAndContinue = async (req, res) => {
   try {
@@ -465,11 +589,7 @@ const submitSubjectAndContinue = async (req, res) => {
     await result.save();
 
     const now = new Date();
-    const endTime = new Date(exam.endTime);
-    const subjectDuration = (exam.subjects[nextIdx]?.duration || 60) * 60000;
-    const subjectEnd = new Date(now.getTime() + subjectDuration);
-    const effectiveEnd = subjectEnd < endTime ? subjectEnd : endTime;
-    const remainingSeconds = Math.max(0, Math.floor((effectiveEnd - now) / 1000));
+    const remainingSeconds = getSharedRemainingSeconds(exam, result, now);
 
     res.json({
       success: true,
@@ -555,14 +675,16 @@ const submitExam = async (req, res) => {
     }
 
     // Merge submitted answers with existing saved answers
-    const existingAnswers = result.savedProgress?.answers
-      ? Object.fromEntries(
-        typeof result.savedProgress.answers.entries === 'function'
-          ? result.savedProgress.answers.entries()
-          : Object.entries(result.savedProgress.answers)
-      )
-      : {};
-    const mergedAnswers = { ...existingAnswers, ...(answers || {}) };
+    const existingAnswers = mapToObject(result.savedProgress?.answers);
+    const incoming = answers || {};
+    const mergedAnswers = { ...existingAnswers, ...incoming };
+    Object.keys(incoming).forEach((key) => {
+      if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
+    });
+    // Strip any lingering nulls from existing
+    Object.keys(mergedAnswers).forEach((key) => {
+      if (mergedAnswers[key] == null || mergedAnswers[key] === '') delete mergedAnswers[key];
+    });
 
     const existingMappings = result.savedProgress?.optionMappings;
     const existingCompletedSubjects = result.savedProgress?.completedSubjects || [];
@@ -744,6 +866,7 @@ module.exports = {
   saveProgress,
   reportViolation,
   submitExam,
+  switchSubject,
   submitSubjectAndContinue,
   getStudentResult,
   getStudentAllResults,

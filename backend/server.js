@@ -1,4 +1,4 @@
-﻿require('dotenv').config();
+require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -115,6 +115,9 @@ connectDB().then(() => {
 
       const { startGoogleFormSync } = require('./jobs/syncGoogleForm');
       startGoogleFormSync();
+
+      const { startEmailWorker } = require('./jobs/emailWorker');
+      startEmailWorker();
 
       // ── Exam status auto-updater ─────────────────────────────────────────
       // Promotes: scheduled → active (when startTime reached)

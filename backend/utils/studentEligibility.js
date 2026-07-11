@@ -1,11 +1,15 @@
 const mongoose = require('mongoose');
 
 const normalizeSection = (value) => {
-  // Convert "Section B" or "Sec B" or "B" to "B"
-  return String(value || '')
-    .trim()
-    .replace(/sec(tion)?\s*/i, '')
-    .toUpperCase();
+  const str = String(value || '').trim().toUpperCase();
+  if (str === 'ALL' || str === 'ALL SECTIONS' || str === 'ALL SECTION' || str.startsWith('ALL SEC')) {
+    return 'ALL';
+  }
+  const replaced = str.replace(/SEC(TION)?\s*/i, '').trim();
+  if (replaced === 'ALL' || replaced === 'ALL SECTIONS' || replaced === 'ALL SECTION' || replaced.startsWith('ALL SEC')) {
+    return 'ALL';
+  }
+  return replaced.replace(/[^A-Z0-9]/gi, '').toUpperCase();
 };
 
 const normalizeYear = (value) => {

@@ -27,7 +27,8 @@ const {
   retrySingleEmail, retryAllFailedEmails,
   exportFailedEmailLogs,
   previewRecipientCount,
-  getLiveMonitorData
+  getLiveMonitorData,
+  getEmailQueueProgress
 } = require('../controllers/adminManagementController');
 
 // ==================== DASHBOARD ====================
@@ -73,6 +74,7 @@ router.get('/email-logs', adminOnly, getEmailLogs);
 router.get('/email-logs/export-failed', adminOnly, exportFailedEmailLogs);
 router.post('/email-logs/retry-all', adminOnly, retryAllFailedEmails);
 router.post('/email-logs/:logId/retry', adminOnly, retrySingleEmail);
+router.get('/email-queue/progress', adminOnly, getEmailQueueProgress);
 
 // ==================== CSV STUDENT IMPORT ====================
 router.get('/students/csv-template', adminOnly, downloadCSVTemplate);

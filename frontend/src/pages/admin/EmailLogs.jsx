@@ -79,6 +79,21 @@ export default function EmailLogs() {
   })
   const [sending, setSending]             = useState(false)
 
+  const [queueProgress, setQueueProgress] = useState(null)
+
+  const fetchQueueProgress = useCallback(async () => {
+    try {
+      const res = await api.get('/admin/email-queue/progress')
+      setQueueProgress(res.data.progress)
+    } catch {}
+  }, [])
+
+  useEffect(() => {
+    fetchQueueProgress()
+    const interval = setInterval(fetchQueueProgress, 3000)
+    return () => clearInterval(interval)
+  }, [fetchQueueProgress])
+
   // Student search states
   const [studentSearchText, setStudentSearchText] = useState('')
   const [searchedStudents, setSearchedStudents] = useState([])
@@ -373,6 +388,41 @@ export default function EmailLogs() {
           </div>
         ))}
       </div>
+
+      {/* Background Queue Progress */}
+      {queueProgress && queueProgress.total > 0 && (
+        <div className="glass-card p-5 border border-blue-500/20 bg-slate-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 fade-in">
+          <div className="flex-1 w-full">
+            <div className="flex items-center gap-2 mb-2">
+              {(queueProgress.queued > 0 || queueProgress.processing > 0) ? (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+                </span>
+              ) : (
+                <CheckCircle size={16} className="text-green-400" />
+              )}
+              <p className="text-sm font-semibold text-slate-200">
+                {(queueProgress.queued > 0 || queueProgress.processing > 0) ? 'Processing Background Email Notifications...' : 'Background Email Notifications Delivery Complete'}
+              </p>
+            </div>
+            <div className="w-full bg-slate-800 rounded-full h-2.5 mt-2 overflow-hidden border border-slate-700/50">
+              <div className="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ width: `${queueProgress.percentage}%` }}></div>
+            </div>
+            <div className="flex gap-4 mt-3 text-xs text-slate-400">
+              <span>Total: <strong className="text-slate-200">{queueProgress.total}</strong></span>
+              <span>Queued: <strong className="text-yellow-400/90">{queueProgress.queued}</strong></span>
+              <span>Processing: <strong className="text-blue-400">{queueProgress.processing}</strong></span>
+              <span>Sent: <strong className="text-green-400/90">{queueProgress.sent}</strong></span>
+              <span>Failed: <strong className="text-red-400">{queueProgress.failed}</strong></span>
+            </div>
+          </div>
+          <div className="text-left sm:text-right shrink-0">
+            <p className="text-3xl font-extrabold text-blue-400 font-mono">{queueProgress.percentage}%</p>
+            <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Delivery Progress</p>
+          </div>
+        </div>
+      )}
 
       {/* Filters */}
       <div className="space-y-3">

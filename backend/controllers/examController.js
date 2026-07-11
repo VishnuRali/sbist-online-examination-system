@@ -4,7 +4,7 @@ const Result = require('../models/Result');
 const Student = require('../models/Student');
 const multer = require('multer');
 const { parseQuestionsFromExcel, generateQuestionTemplate } = require('../utils/excelParser');
-const { shuffleArray } = require('../utils/generateId');
+const { shuffleArray, generateAccessCode } = require('../utils/generateId');
 const { evaluateExamResult, calculateGrade } = require('../utils/resultEvaluator');
 const ExcelJS = require('exceljs');
 const PDFDocument = require('pdfkit');
@@ -15,6 +15,31 @@ const {
   normalizeSection,
   resolveDepartmentId
 } = require('../utils/studentEligibility');
+
+/** Ensure exam documents have a 6-digit accessCode (backfill legacy exams). */
+const ensureAccessCode = async (exam) => {
+  if (!exam) return exam;
+  if (exam.accessCode && /^\d{6}$/.test(String(exam.accessCode))) return exam;
+  const code = generateAccessCode();
+  await Exam.findByIdAndUpdate(exam._id, { accessCode: code });
+  if (typeof exam.toObject === 'function') {
+    exam.accessCode = code;
+  } else {
+    exam.accessCode = code;
+  }
+  return exam;
+};
+
+const ensureAccessCodes = async (exams) => {
+  const missing = exams.filter(e => !e.accessCode || !/^\d{6}$/.test(String(e.accessCode)));
+  if (missing.length === 0) return exams;
+  await Promise.all(missing.map(async (exam) => {
+    const code = generateAccessCode();
+    await Exam.findByIdAndUpdate(exam._id, { accessCode: code });
+    exam.accessCode = code;
+  }));
+  return exams;
+};
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -46,6 +71,8 @@ const getExams = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
+    await ensureAccessCodes(exams);
+
     res.json({ success: true, exams });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -59,6 +86,7 @@ const getExamById = async (req, res) => {
       .populate('department', 'name code')
       .populate('createdBy', 'name email');
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    await ensureAccessCode(exam);
     res.json({ success: true, exam });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -138,6 +166,14 @@ const createExam = async (req, res) => {
 
     await validateExamOverlap(req.body);
     const examData = { ...req.body, createdBy: req.admin._id };
+    // Always generate server-side — ignore any client-supplied accessCode
+    delete examData.accessCode;
+    examData.accessCode = generateAccessCode();
+
+    // Empty string cannot be cast to ObjectId (common for multi-subject exams)
+    if (!examData.subject) {
+      delete examData.subject;
+    }
 
     // For multi-subject, compute totalMarks from subjects
     if (examData.examType === 'multi' && Array.isArray(examData.subjects) && examData.subjects.length > 0) {
@@ -149,6 +185,8 @@ const createExam = async (req, res) => {
       examData.totalMarks = examData.subjects.reduce((sum, s) => sum + Number(s.totalMarks || 0), 0);
       examData.passMarks = examData.subjects.reduce((sum, s) => sum + Number(s.passMarks || 0), 0);
       examData.duration = examData.subjects.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+      // Multi-subject exams do not use the single subject ref
+      delete examData.subject;
     } else {
       if (Number(examData.passMarks) > Number(examData.totalMarks)) {
         throw new Error('Passing marks cannot be greater than total marks.');
@@ -172,6 +210,17 @@ const updateExam = async (req, res) => {
     await validateExamOverlap(req.body, req.params.id);
 
     const updateData = { ...req.body };
+    // Access code is managed only via regenerate endpoint
+    delete updateData.accessCode;
+
+    // Empty string cannot be cast to ObjectId
+    if (!updateData.subject) {
+      delete updateData.subject;
+      if (updateData.examType === 'multi') {
+        updateData.$unset = { ...(updateData.$unset || {}), subject: 1 };
+      }
+    }
+
     // For multi-subject, recompute totals from subjects
     if (updateData.examType === 'multi' && Array.isArray(updateData.subjects) && updateData.subjects.length > 0) {
       updateData.subjects.forEach(s => {
@@ -182,18 +231,39 @@ const updateExam = async (req, res) => {
       updateData.totalMarks = updateData.subjects.reduce((sum, s) => sum + Number(s.totalMarks || 0), 0);
       updateData.passMarks = updateData.subjects.reduce((sum, s) => sum + Number(s.passMarks || 0), 0);
       updateData.duration = updateData.subjects.reduce((sum, s) => sum + Number(s.duration || 0), 0);
+      delete updateData.subject;
+      updateData.$unset = { ...(updateData.$unset || {}), subject: 1 };
     } else {
       if (Number(updateData.passMarks) > Number(updateData.totalMarks)) {
         throw new Error('Passing marks cannot be greater than total marks.');
       }
     }
 
-    const exam = await Exam.findByIdAndUpdate(req.params.id, updateData, { new: true, runValidators: true })
+    // Split $unset from set fields for findByIdAndUpdate
+    const unset = updateData.$unset;
+    delete updateData.$unset;
+    const updateOps = unset ? { $set: updateData, $unset: unset } : updateData;
+
+    const exam = await Exam.findByIdAndUpdate(req.params.id, updateOps, { new: true, runValidators: true })
       .populate('subject department createdBy');
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
     res.json({ success: true, exam });
   } catch (error) {
     res.status(400).json({ success: false, message: error.message });
+  }
+};
+
+const regenerateAccessCode = async (req, res) => {
+  try {
+    const exam = await Exam.findById(req.params.id);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+
+    exam.accessCode = generateAccessCode();
+    await exam.save();
+
+    res.json({ success: true, message: 'Access code regenerated', accessCode: exam.accessCode });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
 };
 
@@ -242,268 +312,56 @@ const publishExam = async (req, res) => {
     exam.totalQuestions = questionCount;
     await exam.save();
 
-    let report = null;
-    let emailSuccess = true;
-    let emailErrorMsg = '';
+    const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
+    const studentQuery = await buildStudentEligibilityQuery(exam, { target: 'all' });
+    const eligibleStudents = await Student.find(studentQuery).populate('department');
 
-    try {
-      report = await sendPublishNotifications(exam._id);
-      emailSuccess = report && report.eligibleCount > 0 && report.failedCount === 0 && !report.emailServiceError;
-    } catch (err) {
-      console.error('[publishExam] Failed to send email notifications:', err);
-      emailSuccess = false;
-      emailErrorMsg = err.message;
-    }
+    const EmailQueue = require('../models/EmailQueue');
+    const queueJobs = eligibleStudents.map(student => ({
+      exam: exam._id,
+      student: student._id,
+      email: student.email,
+      notificationType: 'custom',
+      status: 'queued',
+      nextRetryTime: new Date()
+    }));
 
-    let eligibilityDiagnostics = null;
-    if (process.env.NODE_ENV === 'development') {
+    if (queueJobs.length > 0) {
       try {
-        const Student = require('../models/Student');
-        const examDeptId = await resolveDepartmentId(exam.department);
-
-        const allStudents = await Student.countDocuments({});
-        const activeStudents = await Student.countDocuments({ isActive: true });
-        
-        let departmentMatched = 0;
-        let yearMatched = 0;
-        let semesterMatched = 0;
-        let sectionMatched = 0;
-
-        if (examDeptId) {
-          departmentMatched = await Student.countDocuments({ isActive: true, department: examDeptId });
-          const normYear = normalizeYear(exam.year);
-          if (normYear) {
-            yearMatched = await Student.countDocuments({ isActive: true, department: examDeptId, year: normYear });
-            const normSem = normalizeSemester(exam.semester);
-            if (normSem) {
-              semesterMatched = await Student.countDocuments({ isActive: true, department: examDeptId, year: normYear, semester: normSem });
-              
-              const examSections = Array.isArray(exam.sections) && exam.sections.length > 0
-                ? exam.sections.map(s => normalizeSection(s))
-                : (exam.section ? [normalizeSection(exam.section)] : []);
-              const activeSections = examSections.filter(s => s !== '' && s !== 'ALL' && s !== 'ALL SECTIONS');
-              
-              let sectionQuery = {
-                isActive: true,
-                department: examDeptId,
-                year: normYear,
-                semester: normSem
-              };
-              if (activeSections.length > 0) {
-                sectionQuery.section = { $in: activeSections };
-              }
-              sectionMatched = await Student.countDocuments(sectionQuery);
-            }
-          }
+        await EmailQueue.insertMany(queueJobs, { ordered: false });
+      } catch (bulkErr) {
+        if (bulkErr.code !== 11000 && !bulkErr.writeErrors) {
+          console.error('[publishExam] Failed to insert queue jobs:', bulkErr);
         }
-
-        eligibilityDiagnostics = {
-          allStudents,
-          activeStudents,
-          departmentMatched,
-          yearMatched,
-          semesterMatched,
-          sectionMatched
-        };
-      } catch (diagErr) {
-        console.error('[publishExam] Failed to calculate eligibility diagnostics:', diagErr);
       }
     }
 
     res.json({
       success: true,
       examPublished: true,
-      message: 'Exam published successfully',
+      message: 'Exam published successfully. Email notifications are being sent in the background.',
       exam,
-      emailServiceError: (!report && emailErrorMsg) || (report && report.emailServiceError),
       emailNotification: {
-        eligible: report ? report.eligibleCount : 0,
-        attempted: report ? (report.sentCount + report.failedCount) : 0,
-        sent: report ? report.sentCount : 0,
-        failed: report ? report.failedCount : 0,
+        eligible: eligibleStudents.length,
+        attempted: 0,
+        sent: 0,
+        failed: 0,
         skipped: 0,
-        success: !!emailSuccess,
-        error: emailErrorMsg || (report && report.emailServiceError ? 'Email service is unavailable' : '')
+        success: true,
+        error: ''
       },
-      report: report || {
-        selectedSections: (Array.isArray(exam.sections) ? exam.sections.join(', ') : exam.section) || 'All Sections',
-        eligibleCount: 0,
+      report: {
+        selectedSections: (Array.isArray(exam.sections) && exam.sections.length > 0) ? exam.sections.join(', ') : (exam.section || 'All Sections'),
+        eligibleCount: eligibleStudents.length,
         sentCount: 0,
         failedCount: 0,
         failedStudents: [],
-        emailServiceError: true
-      },
-      ...(eligibilityDiagnostics ? { eligibilityDiagnostics } : {})
+        emailServiceError: false
+      }
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
-};
-
-const sendPublishNotifications = async (examId, targetFailedStudentIds = null) => {
-  const EmailLog = require('../models/EmailLog');
-  const { getGmailConfig, createTransporter, getReminderEmailHTML, parseSmtpError } = require('../utils/emailService');
-  const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
-
-  const exam = await Exam.findById(examId).populate('department subject');
-  if (!exam) throw new Error('Exam not found');
-  console.log(`[EMAIL] Exam ID: ${exam._id}`);
-  console.log(`[EMAIL] Exam title: ${exam.title}`);
-
-  const studentQuery = await buildStudentEligibilityQuery(exam, { target: 'all' });
-
-  // If retrying, limit only to those failed student IDs
-  if (targetFailedStudentIds && Array.isArray(targetFailedStudentIds)) {
-    studentQuery._id = { $in: targetFailedStudentIds };
-  }
-
-  // Debug logging
-  console.log('[EXAM PUBLISH]');
-  console.log('Exam ID:', exam._id);
-  console.log('Department filter:', studentQuery.department);
-  console.log('Year filter:', studentQuery.year);
-  console.log('Semester filter:', studentQuery.semester);
-  console.log('Section filter:', studentQuery.section);
-  console.log('Final MongoDB query:', JSON.stringify(studentQuery, null, 2));
-
-  const eligibleStudents = await Student.find(studentQuery).populate('department');
-  console.log('Eligible students:', eligibleStudents.length);
-  console.log('Matched Student IDs:', eligibleStudents.map(s => s.studentId || s._id));
-
-  // Load SMTP config
-  const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
-  const isSmtpConfigured = !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
-  
-  let sentCount = 0;
-  let failedCount = 0;
-  const failedStudentsList = [];
-
-  const transporter = isSmtpConfigured ? createTransporter(user, pass, { host, port, secure }) : null;
-
-  let verificationError = null;
-  if (isSmtpConfigured) {
-    try {
-      await transporter.verify();
-    } catch (verifyErr) {
-      verificationError = parseSmtpError(verifyErr);
-      console.error('[SMTP] Pre-publish transporter verification failed:', verifyErr);
-    }
-  }
-
-  for (const student of eligibleStudents) {
-    // Generate email HTML
-    const emailHtml = getReminderEmailHTML(student, exam, 'custom', portalUrl);
-    
-    // Check if EmailLog already exists
-    let log = await EmailLog.findOne({
-      student: student._id,
-      exam: exam._id,
-      type: 'custom'
-    });
-
-    if (log) {
-      // If it has already been sent successfully, skip resending to avoid duplicates
-      if (log.status === 'sent') {
-        sentCount++;
-        continue;
-      }
-      log.status = 'pending';
-      log.attemptedAt = new Date();
-      log.attempts += 1;
-      log.errorMessage = '';
-    } else {
-      // Create new email log
-      log = new EmailLog({
-        to: student.email,
-        studentName: student.name,
-        studentId: student.studentId,
-        student: student._id,
-        type: 'custom',
-        subject: `📚 Exam Announcement: ${exam.title}`,
-        body: emailHtml,
-        status: 'pending',
-        department: student.department?._id || student.department,
-        year: student.year,
-        semester: student.semester,
-        section: student.section,
-        exam: exam._id
-      });
-    }
-    await log.save();
-    console.log(`[EMAIL LOG] Exam ID: ${log.exam}`);
-
-    if (!isSmtpConfigured) {
-      log.status = 'failed';
-      log.errorMessage = 'SMTP credentials not configured';
-      await log.save();
-      failedCount++;
-      failedStudentsList.push({
-        _id: student._id.toString(),
-        name: student.name,
-        studentId: student.studentId,
-        email: student.email,
-        section: student.section || '—',
-        reason: 'SMTP credentials not configured'
-      });
-      continue;
-    }
-
-    if (verificationError) {
-      log.status = 'failed';
-      log.errorMessage = `SMTP verification failed: ${verificationError}`;
-      await log.save();
-      failedCount++;
-      failedStudentsList.push({
-        _id: student._id.toString(),
-        name: student.name,
-        studentId: student.studentId,
-        email: student.email,
-        section: student.section || '—',
-        reason: `SMTP verification failed: ${verificationError}`
-      });
-      continue;
-    }
-
-    try {
-      await transporter.sendMail({
-        from: `"SBIT Exam Portal" <${user}>`,
-        to: student.email,
-        subject: `📚 Exam Announcement: ${exam.title}`,
-        html: emailHtml
-      });
-
-      log.status = 'sent';
-      log.sentAt = new Date();
-      await log.save();
-      sentCount++;
-    } catch (err) {
-      const errorMsg = parseSmtpError(err);
-      log.status = 'failed';
-      log.errorMessage = errorMsg;
-      await log.save();
-      failedCount++;
-      failedStudentsList.push({
-        _id: student._id.toString(),
-        name: student.name,
-        studentId: student.studentId,
-        email: student.email,
-        section: student.section || '—',
-        reason: errorMsg
-      });
-    }
-
-    // Add tiny delay to protect Gmail limits
-    await new Promise(resolve => setTimeout(resolve, 200));
-  }
-
-  return {
-    selectedSections: (Array.isArray(exam.sections) && exam.sections.length > 0) ? exam.sections.join(', ') : (exam.section || 'All Sections'),
-    eligibleCount: eligibleStudents.length,
-    sentCount,
-    failedCount,
-    failedStudents: failedStudentsList,
-    emailServiceError: !isSmtpConfigured
-  };
 };
 
 const retryPublishNotifications = async (req, res) => {
@@ -514,8 +372,39 @@ const retryPublishNotifications = async (req, res) => {
       return res.status(400).json({ success: false, message: 'studentIds array is required' });
     }
 
-    const report = await sendPublishNotifications(id, studentIds);
-    res.json({ success: true, report });
+    const EmailQueue = require('../models/EmailQueue');
+    const Student = require('../models/Student');
+    const students = await Student.find({ _id: { $in: studentIds } });
+
+    const queueJobs = students.map(student => ({
+      exam: id,
+      student: student._id,
+      email: student.email,
+      notificationType: 'custom',
+      status: 'queued',
+      nextRetryTime: new Date()
+    }));
+
+    for (const job of queueJobs) {
+      await EmailQueue.findOneAndUpdate(
+        { exam: job.exam, student: job.student, notificationType: job.notificationType },
+        { $set: { status: 'queued', retryCount: 0, nextRetryTime: new Date(), email: job.email } },
+        { upsert: true, new: true }
+      );
+    }
+
+    res.json({
+      success: true,
+      message: 'Retry notification jobs queued successfully.',
+      report: {
+        selectedSections: 'Selected Students',
+        eligibleCount: students.length,
+        sentCount: 0,
+        failedCount: 0,
+        failedStudents: [],
+        emailServiceError: false
+      }
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -1300,6 +1189,7 @@ const exportResultsPDF = async (req, res) => {
 
 module.exports = {
   getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
+  regenerateAccessCode,
   getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
   getQuestions, addQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions,
   downloadQuestionTemplate, forceSubmitStudent, getExamResults,

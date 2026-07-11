@@ -7,7 +7,7 @@ import {
   Plus, Edit2, Trash2, BookOpen,
   Calendar, Clock, AlertTriangle,
   List, Send, Layers, GripVertical, X, ChevronUp, ChevronDown, Filter,
-  CheckCircle, RefreshCw
+  CheckCircle, RefreshCw, Copy, KeyRound
 } from 'lucide-react'
 
 const EMPTY_SUBJECT = {
@@ -257,6 +257,7 @@ export default function ExamManager() {
   const [deleting, setDeleting] = useState(null)
   const [publishReport, setPublishReport] = useState(null)
   const [retryingEmails, setRetryingEmails] = useState(false)
+  const [regeneratingCode, setRegeneratingCode] = useState(null)
 
   // Advanced Filters
   const [filterDept, setFilterDept] = useState('')
@@ -343,6 +344,9 @@ export default function ExamManager() {
         payload.totalMarks = payload.subjects.reduce((s, x) => s + Number(x.totalMarks || 0), 0)
         payload.passMarks = payload.subjects.reduce((s, x) => s + Number(x.passMarks || 0), 0)
         payload.duration = payload.subjects.reduce((s, x) => s + Number(x.duration || 0), 0)
+        delete payload.subject
+      } else if (!payload.subject) {
+        delete payload.subject
       }
 
       if (editExam) {
@@ -378,19 +382,9 @@ export default function ExamManager() {
   const handlePublish = async (id) => {
     try {
       const res = await api.patch(`/exam/${id}/publish`)
-      const { emailNotification, report } = res.data
+      const { report } = res.data
 
-      if (emailNotification) {
-        if (emailNotification.eligible === 0) {
-          toast.success('Exam published successfully.', { id: 'exam-publish-status' })
-        } else if (!emailNotification.success) {
-          toast.error('Exam published successfully, but email notifications could not be sent.', { id: 'exam-publish-status' })
-        } else {
-          toast.success('Exam published and notifications sent successfully.', { id: 'exam-publish-status' })
-        }
-      } else {
-        toast.success('Exam published successfully.', { id: 'exam-publish-status' })
-      }
+      toast.success('Exam published successfully. Email notifications are being sent in the background.', { id: 'exam-publish-status' })
 
       if (report) {
         setPublishReport({
@@ -401,6 +395,30 @@ export default function ExamManager() {
       loadData()
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to publish', { id: 'exam-publish-status' })
+    }
+  }
+
+  const handleCopyAccessCode = async (code) => {
+    try {
+      await navigator.clipboard.writeText(String(code))
+      toast.success('Access code copied')
+    } catch {
+      toast.error('Failed to copy access code')
+    }
+  }
+
+  const handleRegenerateAccessCode = async (examId) => {
+    if (!confirm('Regenerate access code? Students will need the new code to start this exam.')) return
+    setRegeneratingCode(examId)
+    try {
+      const res = await api.post(`/exam/${examId}/regenerate-access-code`)
+      const newCode = res.data.accessCode
+      setExams(prev => prev.map(e => e._id === examId ? { ...e, accessCode: newCode } : e))
+      toast.success(`New access code: ${newCode}`)
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to regenerate access code')
+    } finally {
+      setRegeneratingCode(null)
     }
   }
 
@@ -551,6 +569,34 @@ export default function ExamManager() {
                   <span className="flex items-center gap-1"><Calendar size={12} /> {formatDateTime(exam.startTime)}</span>
                   <span className="flex items-center gap-1">📋 {exam.totalQuestions} Qs · {exam.totalMarks} Marks</span>
                 </div>
+                {exam.accessCode && (
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-300 bg-amber-500/10 border border-amber-500/25 px-2.5 py-1 rounded-lg">
+                      <KeyRound size={12} />
+                      Access code: <span className="font-mono tracking-widest">{exam.accessCode}</span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handleCopyAccessCode(exam.accessCode)}
+                      className="btn-secondary btn-sm flex items-center gap-1 text-xs"
+                      title="Copy access code"
+                    >
+                      <Copy size={12} /> Copy
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateAccessCode(exam._id)}
+                      disabled={regeneratingCode === exam._id}
+                      className="btn-secondary btn-sm flex items-center gap-1 text-xs"
+                      title="Regenerate access code"
+                    >
+                      {regeneratingCode === exam._id
+                        ? <div className="spinner !w-3.5 !h-3.5" />
+                        : <RefreshCw size={12} />}
+                      Regenerate
+                    </button>
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <Link to={`/admin/exams/${exam._id}/questions`} className="btn-secondary btn-sm flex items-center gap-1.5 text-xs">
