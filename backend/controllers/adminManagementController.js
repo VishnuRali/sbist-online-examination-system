@@ -10,7 +10,7 @@ const Subject = require('../models/Subject');
 const bcrypt = require('bcryptjs');
 const { generatePassword } = require('../utils/generateId');
 const { parseStudentsFromCSV } = require('../utils/csvParser');
-const { sendWelcomeEmail, testSmtpConnection } = require('../utils/emailService');
+const { sendWelcomeEmail, testSmtpConnection, retryEmailLog, retryAllFailedLogs } = require('../utils/emailService');
 const { testSheetsConnection } = require('../utils/googleSheets');
 const { formatDateTime } = require('../utils/dateFormatter');
 
@@ -326,7 +326,7 @@ const retrySingleEmail = async (req, res) => {
 const retryAllFailedEmails = async (req, res) => {
   try {
     const result = await retryAllFailedLogs();
-    
+
     const EmailQueue = require('../models/EmailQueue');
     const queueResult = await EmailQueue.updateMany(
       { status: 'failed' },
@@ -551,7 +551,7 @@ const importStudentsCSV = async (req, res) => {
         }).catch(() => { emailsFailed++; })
       );
       await Promise.allSettled(emailTasks);
-      
+
       if (i + EMAIL_CONCURRENCY < savedStudents.length) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
@@ -643,7 +643,7 @@ const sendManualReminders = async (req, res) => {
         const result = await sendReminderEmail(student, exam, type);
         if (result.success) sent++;
         else failed++;
-        
+
         await new Promise(resolve => setTimeout(resolve, 200));
       } catch (err) {
         errorsList.push({ rollNumber: student.rollNumber || 'N/A', reason: err.message });
