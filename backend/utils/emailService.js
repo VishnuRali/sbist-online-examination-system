@@ -26,10 +26,19 @@ const getGmailConfig = async () => {
   }
 
   if (user) user = user.trim();
-  if (pass) pass = pass.replace(/\s+/g, '');
+  if (pass) {
+    const { decrypt } = require('./crypto');
+    pass = decrypt(pass);
+    pass = String(pass).replace(/\s+/g, '');
+  }
 
   const host = process.env.SMTP_HOST || 'smtp.gmail.com';
   const isGmail = host.toLowerCase().includes('gmail.com');
+  
+  if (isGmail && pass && pass.length !== 16) {
+    throw new Error('Invalid Gmail App Password length');
+  }
+
   const port = isGmail ? 587 : Number(process.env.SMTP_PORT || 465);
   const secure = isGmail ? false : (process.env.SMTP_SECURE !== undefined ? (String(process.env.SMTP_SECURE) === 'true') : true);
   const portalUrl = settings?.examPortalUrl || process.env.EXAM_URL || 'http://localhost:5173';
@@ -40,10 +49,19 @@ const getGmailConfig = async () => {
 // Create transporter
 const createTransporter = (user, pass, options = {}) => {
   if (user) user = user.trim();
-  if (pass) pass = pass.replace(/\s+/g, '');
+  if (pass) {
+    const { decrypt } = require('./crypto');
+    pass = decrypt(pass);
+    pass = String(pass).replace(/\s+/g, '');
+  }
 
   const host = options.host || process.env.SMTP_HOST || 'smtp.gmail.com';
   const isGmail = host.toLowerCase().includes('gmail.com');
+
+  if (isGmail && pass && pass.length !== 16) {
+    throw new Error('Invalid Gmail App Password length');
+  }
+
   const port = isGmail ? 587 : Number(options.port || process.env.SMTP_PORT || 465);
   const secure = isGmail ? false : (options.secure !== undefined
     ? options.secure
@@ -58,7 +76,10 @@ const createTransporter = (user, pass, options = {}) => {
     auth: { user, pass },
     tls: {
       rejectUnauthorized: !isDev
-    }
+    },
+    connectionTimeout: 10000, // 10 seconds
+    greetingTimeout: 10000,   // 10 seconds
+    socketTimeout: 20000      // 20 seconds
   };
 
   if (isGmail) {
@@ -88,16 +109,17 @@ const createTransporter = (user, pass, options = {}) => {
 };
 
 const isEmailConfigured = async () => {
-  const { user, pass } = await getGmailConfig();
-  return !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
+  try {
+    const { user, pass } = await getGmailConfig();
+    return !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
+  } catch (err) {
+    return false;
+  }
 };
+
 
 // ==================== EMAIL TEMPLATES ====================
 
-/**
- * Welcome email sent when student account is created.
- * Contains: Student Name, Student ID, Password, Department, Year, Semester, Section, Portal URL
- */
 const getWelcomeEmailHTML = (student, portalUrl) => {
   const deptName = typeof student.department === 'object'
     ? (student.department?.name || 'N/A')
@@ -118,7 +140,7 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
   .body { padding: 32px 24px; }
   .greeting { font-size: 17px; color: #1e293b; margin-bottom: 20px; }
   .credential-box { background: #0f172a; border-radius: 10px; padding: 20px; margin: 20px 0; }
-  .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding-bottom: 10px; border-bottom: 1px solid #1e3a8a; }
+  .credential-row { display: flex; justify-content: space-between; align-items: center; margin: 10px 0; padding-bottom: 10px; border-bottom: 1px solid #1e293b; }
   .credential-row:last-child { border-bottom: none; margin-bottom: 0; padding-bottom: 0; }
   .cred-label { color: #94a3b8; font-size: 13px; }
   .cred-value { color: #60a5fa; font-size: 15px; font-weight: 700; font-family: monospace; letter-spacing: 1px; }
@@ -209,11 +231,6 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
   `;
 };
 
-/**
- * Reminder email sent before exam.
- * Includes: Exam Name, Subject, Department, Year, Semester, Section,
- *           Date, Start Time, Duration, Total Marks, Pass Marks, Instructions.
- */
 const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   const typeLabels = {
     reminder_24h: '24 Hours',
@@ -244,7 +261,6 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
   const sectionLabel = student.section && student.section !== '' ? `Section ${student.section}` : (exam.section && exam.section !== '' ? `Section ${exam.section}` : 'All Sections');
   const instructions = (exam.instructions || '').trim();
 
-  // Info rows helper
   const infoRow = (label, value) => `
     <tr>
       <td style="padding:8px 12px;color:#64748b;font-size:13px;font-weight:600;width:38%;border-bottom:1px solid #e2e8f0;">${label}</td>
@@ -337,17 +353,20 @@ const getReminderEmailHTML = (student, exam, type, portalUrl) => {
 
 const parseSmtpError = (error) => {
   const msg = error?.message || String(error);
+  if (msg.includes('Invalid Gmail App Password length') || msg.toLowerCase().includes('password length')) {
+    return 'Invalid Gmail App Password length';
+  }
   if (msg.includes('454') || msg.toLowerCase().includes('too many login attempts')) {
     return 'Gmail rate limit: Too many login attempts. Auto-retry scheduled.';
   }
-  if (msg.includes('Username and Password not accepted') || msg.toLowerCase().includes('authentication') || msg.toLowerCase().includes('invalid credentials')) {
-    return 'Authentication failed: Invalid Gmail credentials. Update in Settings.';
+  if (msg.includes('Username and Password not accepted') || msg.toLowerCase().includes('authentication') || msg.toLowerCase().includes('invalid credentials') || msg.includes('535 5.7.8')) {
+    return 'Gmail authentication failed: verify Gmail address and App Password';
   }
   if (error?.code === 'ETIMEDOUT' || error?.code === 'TIMEOUT' || msg.toLowerCase().includes('timeout') || msg.toLowerCase().includes('time out')) {
-    return 'Connection timeout: Mail server is slow or offline. Auto-retry scheduled.';
+    return 'SMTP connection timed out';
   }
-  if (error?.code === 'ENOTFOUND' || error?.code === 'ECONNREFUSED' || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('dns')) {
-    return 'Network error: Connection refused or host unreachable. Auto-retry scheduled.';
+  if (error?.code === 'ENOTFOUND' || error?.code === 'ECONNREFUSED' || error?.code === 'ENETUNREACH' || msg.toLowerCase().includes('network') || msg.toLowerCase().includes('dns') || msg.includes('ENETUNREACH')) {
+    return 'SMTP connection blocked or unreachable';
   }
   if (msg.toLowerCase().includes('limit exceeded') || msg.toLowerCase().includes('exceeded')) {
     return 'Daily limit exceeded: SMTP sending quota reached. Auto-retry scheduled.';
@@ -553,17 +572,16 @@ const retryAllFailedLogs = async () => {
       const res = await retryEmailLog(log);
       if (res.success) successCount++;
       else failCount++;
-    } catch {
+    } catch (e) {
       failCount++;
     }
   }
-  return { success: successCount, failed: failCount };
+  return { successCount, failCount, total: failedLogs.length };
 };
 
 const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => {
   try {
     const transporter = createTransporter(testUser, testPass);
-    // Verify SMTP connection config
     await transporter.verify();
 
     if (recipientEmail) {
@@ -607,7 +625,7 @@ const testSmtpConnection = async (testUser, testPass, recipientEmail = null) => 
 
     return { 
       success: false, 
-      reason: error.message, 
+      reason: parseSmtpError(error), 
       code: error.code,
       command: error.command,
       selfSignedIssue,
