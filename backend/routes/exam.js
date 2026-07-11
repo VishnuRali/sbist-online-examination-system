@@ -1,28 +1,77 @@
 const express = require('express');
+const multer = require('multer');
+
 const router = express.Router();
 const { adminOnly } = require('../middleware/auth');
+
+// Multer configuration for Excel question-file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024 // 5 MB
+  }
+});
+
 const {
-  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
+  getExams,
+  getExamById,
+  createExam,
+  updateExam,
+  deleteExam,
+  publishExam,
+  retryPublishNotifications,
   regenerateAccessCode,
-  getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
-  getQuestions, addQuestion, updateQuestion, deleteQuestion,
-  bulkUploadQuestions, downloadQuestionTemplate,
-  forceSubmitStudent, getExamResults, exportResultsExcel, exportResultsCSV, exportResultsPDF,
-  upload,
+  getExamSubjects,
+  addExamSubject,
+  updateExamSubject,
+  deleteExamSubject,
+  reorderExamSubjects,
+  getQuestions,
+  addQuestion,
+  updateQuestion,
+  deleteQuestion,
+  bulkUploadQuestions,
+  downloadQuestionTemplate,
+  forceSubmitStudent,
+  getExamResults,
+  exportResultsExcel,
+  exportResultsCSV,
+  exportResultsPDF
 } = require('../controllers/examController');
 
-// Development safety checks to ensure all route handlers are defined functions
+// Development safety checks to ensure all controller handlers exist
 const handlers = {
-  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
-  regenerateAccessCode, getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject,
-  reorderExamSubjects, getQuestions, addQuestion, updateQuestion, deleteQuestion,
-  bulkUploadQuestions, downloadQuestionTemplate, forceSubmitStudent, getExamResults,
-  exportResultsExcel, exportResultsCSV, exportResultsPDF, upload
+  getExams,
+  getExamById,
+  createExam,
+  updateExam,
+  deleteExam,
+  publishExam,
+  retryPublishNotifications,
+  regenerateAccessCode,
+  getExamSubjects,
+  addExamSubject,
+  updateExamSubject,
+  deleteExamSubject,
+  reorderExamSubjects,
+  getQuestions,
+  addQuestion,
+  updateQuestion,
+  deleteQuestion,
+  bulkUploadQuestions,
+  downloadQuestionTemplate,
+  forceSubmitStudent,
+  getExamResults,
+  exportResultsExcel,
+  exportResultsCSV,
+  exportResultsPDF
 };
 
 Object.entries(handlers).forEach(([name, handler]) => {
   if (typeof handler !== 'function') {
-    throw new Error(`Route callback for handler "${name}" is undefined. Please check the spelling or export in examController.js`);
+    throw new Error(
+      `Route callback for handler "${name}" is undefined. Please check the spelling or export in examController.js`
+    );
   }
 });
 
@@ -36,30 +85,46 @@ router.patch('/:id/publish', adminOnly, publishExam);
 router.post('/:id/publish/retry', adminOnly, retryPublishNotifications);
 router.post('/:id/regenerate-access-code', adminOnly, regenerateAccessCode);
 
-// ── Multi-subject management ──────────────────────────────────────────────────
+// ── Multi-subject management ─────────────────────────────────────────────────
 router.get('/:examId/subjects', adminOnly, getExamSubjects);
 router.post('/:examId/subjects', adminOnly, addExamSubject);
 router.put('/:examId/subjects/:subjectIndex', adminOnly, updateExamSubject);
 router.delete('/:examId/subjects/:subjectIndex', adminOnly, deleteExamSubject);
 router.post('/:examId/subjects/reorder', adminOnly, reorderExamSubjects);
 
-// ── Questions ─────────────────────────────────────────────────────────────────
+// ── Questions ────────────────────────────────────────────────────────────────
 router.get('/:examId/questions', adminOnly, getQuestions);
 router.post('/:examId/questions', adminOnly, addQuestion);
 router.put('/:examId/questions/:questionId', adminOnly, updateQuestion);
 router.delete('/:examId/questions/:questionId', adminOnly, deleteQuestion);
-router.post('/:examId/questions/bulk-upload', adminOnly, upload.single('file'), bulkUploadQuestions);
+
+router.post(
+  '/:examId/questions/bulk-upload',
+  adminOnly,
+  upload.single('file'),
+  bulkUploadQuestions
+);
+
 router.get('/questions/template', downloadQuestionTemplate);
 
-// ── Force submit ──────────────────────────────────────────────────────────────
-router.post('/:examId/force-submit/:studentId', adminOnly, forceSubmitStudent);
+// ── Force submit ─────────────────────────────────────────────────────────────
+router.post(
+  '/:examId/force-submit/:studentId',
+  adminOnly,
+  forceSubmitStudent
+);
 
-// ── Results & exports ─────────────────────────────────────────────────────────
+// ── Results & exports ────────────────────────────────────────────────────────
 router.get('/:examId/results', adminOnly, getExamResults);
 router.get('/:examId/results/export-excel', adminOnly, exportResultsExcel);
 router.get('/:examId/results/export-csv', adminOnly, exportResultsCSV);
 router.get('/:examId/results/export-pdf', adminOnly, exportResultsPDF);
+
 // Legacy alias
-router.get('/:examId/results/export', adminOnly, exportResultsExcel);
+router.get(
+  '/:examId/results/export',
+  adminOnly,
+  exportResultsExcel
+);
 
 module.exports = router;
