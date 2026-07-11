@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const { adminOnly } = require('../middleware/auth');
 const {
-  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryFailedPublishNotifications,
+  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
   regenerateAccessCode,
   getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
   getQuestions, addQuestion, updateQuestion, deleteQuestion,
@@ -11,6 +11,21 @@ const {
   upload,
 } = require('../controllers/examController');
 
+// Development safety checks to ensure all route handlers are defined functions
+const handlers = {
+  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
+  regenerateAccessCode, getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject,
+  reorderExamSubjects, getQuestions, addQuestion, updateQuestion, deleteQuestion,
+  bulkUploadQuestions, downloadQuestionTemplate, forceSubmitStudent, getExamResults,
+  exportResultsExcel, exportResultsCSV, exportResultsPDF, upload
+};
+
+Object.entries(handlers).forEach(([name, handler]) => {
+  if (typeof handler !== 'function') {
+    throw new Error(`Route callback for handler "${name}" is undefined. Please check the spelling or export in examController.js`);
+  }
+});
+
 // ── Exams CRUD ────────────────────────────────────────────────────────────────
 router.get('/', adminOnly, getExams);
 router.get('/:id', adminOnly, getExamById);
@@ -18,7 +33,7 @@ router.post('/', adminOnly, createExam);
 router.put('/:id', adminOnly, updateExam);
 router.delete('/:id', adminOnly, deleteExam);
 router.patch('/:id/publish', adminOnly, publishExam);
-router.post('/:id/publish/retry', adminOnly, retryFailedPublishNotifications);
+router.post('/:id/publish/retry', adminOnly, retryPublishNotifications);
 router.post('/:id/regenerate-access-code', adminOnly, regenerateAccessCode);
 
 // ── Multi-subject management ──────────────────────────────────────────────────
