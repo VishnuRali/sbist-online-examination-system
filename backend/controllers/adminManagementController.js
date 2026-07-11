@@ -200,8 +200,6 @@ const getAdminActivityLogs = async (req, res) => {
   }
 };
 
-const { retryEmailLog, retryAllFailedLogs } = require('../utils/emailService');
-
 const getEmailLogs = async (req, res) => {
   try {
     const { type, status, department, year, semester, section, exam, subject, dateFrom, dateTo, page = 1, limit = 30, search } = req.query;
@@ -227,7 +225,6 @@ const getEmailLogs = async (req, res) => {
     if (search) {
       const cleanSearch = String(search).trim();
       if (cleanSearch) {
-        // Search students in the database to fetch their MongoDB IDs
         const matchingStudents = await Student.find({
           $or: [
             { studentId: { $regex: cleanSearch, $options: 'i' } },
@@ -246,11 +243,9 @@ const getEmailLogs = async (req, res) => {
       }
     }
 
-    // Stats are calculated based on the active search and type filters (omitting status filter so breakdown is visible)
     const statsQuery = { ...query };
     delete statsQuery.status;
 
-    // High performance aggregation for stats counts
     const statsResult = await EmailLog.aggregate([
       { $match: statsQuery },
       {
@@ -332,7 +327,6 @@ const retryAllFailedEmails = async (req, res) => {
   try {
     const result = await retryAllFailedLogs();
     
-    // Also retry failed queue jobs
     const EmailQueue = require('../models/EmailQueue');
     const queueResult = await EmailQueue.updateMany(
       { status: 'failed' },
@@ -397,8 +391,6 @@ const getEmailQueueProgress = async (req, res) => {
   }
 };
 
-// ==================== FAST BULK CSV STUDENT IMPORT ====================
-
 const importStudentsCSV = async (req, res) => {
   try {
     if (!req.file) {
@@ -418,11 +410,10 @@ const importStudentsCSV = async (req, res) => {
     let emailsSent = 0;
     let emailsFailed = 0;
 
-    // ── Step 1: Build department cache (parallel lookups) ──────────────────
     const uniqueDeptNames = [...new Set(
       students.map(s => (s.departmentName || '').trim().toLowerCase()).filter(Boolean)
     )];
-    const deptCache = new Map(); // lowercase name -> dept document
+    const deptCache = new Map();
 
     await Promise.all(uniqueDeptNames.map(async (deptNameLower) => {
       const escaped = deptNameLower.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -436,8 +427,7 @@ const importStudentsCSV = async (req, res) => {
       if (dept) deptCache.set(deptNameLower, dept);
     }));
 
-    // ── Step 2: Validate and collect students to create, or update existing ───────────
-    const toCreate = []; // { sData, dept }
+    const toCreate = [];
 
     for (const sData of students) {
       const sectionVal = (sData.section || '').trim().toUpperCase();
@@ -467,7 +457,6 @@ const importStudentsCSV = async (req, res) => {
 
       const emailVal = emailLower(sData.email);
 
-      // Check if student already exists by Roll Number or Email
       let existingStudent = null;
       if (sData.rollNumber) {
         existingStudent = await Student.findOne({ rollNumber: sData.rollNumber });
@@ -477,7 +466,6 @@ const importStudentsCSV = async (req, res) => {
       }
 
       if (existingStudent) {
-        // Update section, department, year, semester, email, phone (mobile)
         existingStudent.section = sectionVal;
         existingStudent.department = dept._id;
         existingStudent.year = String(sData.year || '1');
@@ -492,13 +480,11 @@ const importStudentsCSV = async (req, res) => {
           errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: `Failed to update existing student: ${err.message}` });
         }
       } else {
-        // Store normalized sectionVal in sData for creation step
         sData.section = sectionVal;
         toCreate.push({ sData, dept });
       }
     }
 
-    // ── Step 3: Generate sequential student IDs for new creations ────────────────────────────
     const currentYear = new Date().getFullYear();
     const prefix = `SBIT${currentYear}`;
     let sequence = 1;
@@ -516,9 +502,8 @@ const importStudentsCSV = async (req, res) => {
       }
     }
 
-    // ── Step 4: Save new students in batches (50 per batch) ────────────────────
     const BATCH_SIZE = 50;
-    const savedStudents = []; // { student, plainPassword }
+    const savedStudents = [];
 
     for (let i = 0; i < toCreate.length; i += BATCH_SIZE) {
       const batch = toCreate.slice(i, i + BATCH_SIZE);
@@ -552,7 +537,6 @@ const importStudentsCSV = async (req, res) => {
       await Promise.all(saveTasks);
     }
 
-    // ── Step 5: Send emails in parallel batches (5 concurrent with 1.5s delay) ───────────
     const EMAIL_CONCURRENCY = 5;
 
     for (let i = 0; i < savedStudents.length; i += EMAIL_CONCURRENCY) {
@@ -568,7 +552,6 @@ const importStudentsCSV = async (req, res) => {
       );
       await Promise.allSettled(emailTasks);
       
-      // Batch delay to avoid hitting Gmail rate limits
       if (i + EMAIL_CONCURRENCY < savedStudents.length) {
         await new Promise(resolve => setTimeout(resolve, 1500));
       }
@@ -597,16 +580,11 @@ const importStudentsCSV = async (req, res) => {
   }
 };
 
-// Helper to lowercase email safely
 function emailLower(email) {
   return (email || '').toLowerCase().trim();
 }
 
-// ==================== SHARED STUDENT QUERY BUILDER ====================
-
 const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
-
-// ==================== SEND MANUAL REMINDER ====================
 
 const sendManualReminders = async (req, res) => {
   try {
@@ -651,7 +629,6 @@ const sendManualReminders = async (req, res) => {
 
     for (const student of students) {
       try {
-        // Do not resend emails to students who already received them
         const alreadySent = await EmailLog.findOne({
           exam: exam._id,
           student: student._id,
@@ -667,7 +644,6 @@ const sendManualReminders = async (req, res) => {
         if (result.success) sent++;
         else failed++;
         
-        // Add 200ms delay to prevent overloading SMTP/Gmail limits
         await new Promise(resolve => setTimeout(resolve, 200));
       } catch (err) {
         errorsList.push({ rollNumber: student.rollNumber || 'N/A', reason: err.message });
@@ -686,8 +662,6 @@ const sendManualReminders = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ==================== EXPORT FAILED EMAIL LOGS ====================
 
 const exportFailedEmailLogs = async (req, res) => {
   try {
@@ -716,7 +690,7 @@ const exportFailedEmailLogs = async (req, res) => {
     ];
 
     sheet.getRow(1).font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } }; // Red header for failure list
+    sheet.getRow(1).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFDC2626' } };
 
     logs.forEach(l => {
       sheet.addRow({
@@ -744,8 +718,6 @@ const exportFailedEmailLogs = async (req, res) => {
     res.status(500).json({ success: false, message: error.message });
   }
 };
-
-// ==================== PREVIEW RECIPIENT COUNT ====================
 
 const previewRecipientCount = async (req, res) => {
   try {
@@ -803,11 +775,16 @@ const saveSettings = async (req, res) => {
     let settings = await Settings.findOne();
     if (!settings) settings = new Settings({});
 
-    if (gmailUser !== undefined) settings.gmailUser = gmailUser;
+    if (gmailUser !== undefined) settings.gmailUser = gmailUser ? gmailUser.trim() : '';
     if (gmailAppPassword !== undefined && gmailAppPassword !== '••••••••••••••••') {
-      settings.gmailAppPassword = gmailAppPassword;
+      const normalizedPass = String(gmailAppPassword).replace(/\s+/g, '');
+      if (normalizedPass.length !== 16) {
+        return res.status(400).json({ success: false, message: 'Invalid Gmail App Password length' });
+      }
+      const { encrypt } = require('../utils/crypto');
+      settings.gmailAppPassword = encrypt(normalizedPass);
     }
-    if (examPortalUrl !== undefined) settings.examPortalUrl = examPortalUrl;
+    if (examPortalUrl !== undefined) settings.examPortalUrl = examPortalUrl ? examPortalUrl.trim() : '';
     if (googleSpreadsheetId !== undefined) settings.googleSpreadsheetId = googleSpreadsheetId;
     if (googleServiceAccountJson !== undefined && googleServiceAccountJson !== '••••••••••••••••') {
       settings.googleServiceAccountJson = googleServiceAccountJson;
@@ -832,6 +809,15 @@ const testSettings = async (req, res) => {
     if (gmailAppPassword === '••••••••••••••••') {
       const dbSettings = await Settings.findOne();
       finalPassword = dbSettings ? dbSettings.gmailAppPassword : '';
+    } else if (gmailAppPassword) {
+      finalPassword = String(gmailAppPassword).replace(/\s+/g, '');
+      if (finalPassword.length !== 16) {
+        return res.json({
+          success: true,
+          smtp: { success: false, reason: 'Invalid Gmail App Password length' },
+          sheets: { success: false, reason: 'Not tested' }
+        });
+      }
     }
 
     if (gmailUser && finalPassword) {
@@ -875,7 +861,6 @@ const getLiveMonitorData = async (req, res) => {
       return res.status(404).json({ success: false, message: 'Exam not found' });
     }
 
-    // Resolve targeted students across these exams
     const now = new Date();
     let totalStudents = 0, waiting = 0, writing = 0, submitted = 0, autoSubmitted = 0, absent = 0, disqualified = 0;
     const studentsDetails = [];
@@ -884,7 +869,6 @@ const getLiveMonitorData = async (req, res) => {
       const studentQuery = { isActive: true };
       const examDeptId = exam.department?._id || exam.department;
 
-      // Filter by departmentId if requested
       if (departmentId) {
         if (examDeptId && examDeptId.toString() !== departmentId) continue;
         studentQuery.department = departmentId;
@@ -931,7 +915,7 @@ const getLiveMonitorData = async (req, res) => {
         if (!result) {
           if (now < startTime) status = 'Waiting';
           else if (now > endTime) status = 'Absent';
-          else status = 'Waiting'; // Treat not started yet as waiting/not active
+          else status = 'Waiting';
         } else {
           if (result.violations >= (exam.maxViolations || 3)) status = 'Disqualified';
           else if (result.status === 'in_progress') status = 'Currently Writing Exam';
@@ -939,7 +923,6 @@ const getLiveMonitorData = async (req, res) => {
           else if (result.status === 'submitted' || result.status === 'force_submitted') status = 'Submitted';
         }
 
-        // Increment stats counters
         totalStudents++;
         if (status === 'Waiting') waiting++;
         else if (status === 'Currently Writing Exam') writing++;
