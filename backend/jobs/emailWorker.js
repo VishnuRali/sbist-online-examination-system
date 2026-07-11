@@ -2,7 +2,7 @@ const EmailQueue = require('../models/EmailQueue');
 const Student = require('../models/Student');
 const Exam = require('../models/Exam');
 const EmailLog = require('../models/EmailLog');
-const { getGmailConfig, createTransporter, getReminderEmailHTML, getWelcomeEmailHTML } = require('../utils/emailService');
+const { sendWithBrevo, getReminderEmailHTML, getWelcomeEmailHTML } = require('../utils/emailService');
 
 let workerInterval = null;
 
@@ -33,13 +33,10 @@ const sendEmailForJob = async (job) => {
       return;
     }
 
-    const { user, pass, host, port, secure, portalUrl } = await getGmailConfig();
-    const isSmtpConfigured = !!(user && pass && !user.includes('your_gmail') && !pass.includes('your_16_char') && user.trim() !== '' && pass.trim() !== '');
-
-    if (!isSmtpConfigured) {
-      throw new Error('SMTP credentials not configured');
-    }
-
+    const portalUrl =
+      process.env.EXAM_URL ||
+      process.env.FRONTEND_URL ||
+      'https://sbist-online-examination-system.vercel.app';
     let emailHtml = '';
     let subject = '';
 
@@ -51,9 +48,7 @@ const sendEmailForJob = async (job) => {
       subject = `📚 Exam Announcement: ${exam.title}`;
     }
 
-    const transporter = createTransporter(user, pass, { host, port, secure });
-    await transporter.sendMail({
-      from: `"SBIT Exam Portal" <${user}>`,
+    await sendWithBrevo({
       to: job.email,
       subject,
       html: emailHtml
@@ -102,7 +97,7 @@ const sendEmailForJob = async (job) => {
           studentId: student.studentId,
           student: student._id,
           type: job.notificationType,
-          subject: job.notificationType === 'welcome' 
+          subject: job.notificationType === 'welcome'
             ? `🎓 Welcome to SBIT Exam Portal: ${student.studentId}`
             : `📚 Exam Announcement: ${exam.title}`,
           status: 'failed',
@@ -155,7 +150,7 @@ const startEmailWorker = async () => {
   if (workerInterval) return;
 
   await resetStaleJobs();
-  
+
   workerInterval = setInterval(async () => {
     try {
       await processBatch();
