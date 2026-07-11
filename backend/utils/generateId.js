@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Generate unique Student ID: SBIT + YEAR + DEPT_CODE + RANDOM
  * Example: SBIT2024CS001
  */
@@ -44,4 +44,9 @@ const calculateGrade = (percentage) => {
   return 'F';
 };
 
-module.exports = { generateStudentId, generatePassword, shuffleArray, calculateGrade };
+/**
+ * Generate a 6-digit numeric exam access code (100000–999999)
+ */
+const generateAccessCode = () => String(Math.floor(100000 + Math.random() * 900000));
+
+module.exports = { generateStudentId, generatePassword, shuffleArray, calculateGrade, generateAccessCode };
