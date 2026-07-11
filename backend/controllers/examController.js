@@ -16,30 +16,8 @@ const {
   resolveDepartmentId
 } = require('../utils/studentEligibility');
 
-/** Ensure exam documents have a 6-digit accessCode (backfill legacy exams). */
-const ensureAccessCode = async (exam) => {
-  if (!exam) return exam;
-  if (exam.accessCode && /^\d{6}$/.test(String(exam.accessCode))) return exam;
-  const code = generateAccessCode();
-  await Exam.findByIdAndUpdate(exam._id, { accessCode: code });
-  if (typeof exam.toObject === 'function') {
-    exam.accessCode = code;
-  } else {
-    exam.accessCode = code;
-  }
-  return exam;
-};
+// ensureAccessCode and ensureAccessCodes are removed to prevent dynamic access code changes.
 
-const ensureAccessCodes = async (exams) => {
-  const missing = exams.filter(e => !e.accessCode || !/^\d{6}$/.test(String(e.accessCode)));
-  if (missing.length === 0) return exams;
-  await Promise.all(missing.map(async (exam) => {
-    const code = generateAccessCode();
-    await Exam.findByIdAndUpdate(exam._id, { accessCode: code });
-    exam.accessCode = code;
-  }));
-  return exams;
-};
 
 const storage = multer.memoryStorage();
 const upload = multer({
@@ -71,8 +49,6 @@ const getExams = async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    await ensureAccessCodes(exams);
-
     res.json({ success: true, exams });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -86,8 +62,8 @@ const getExamById = async (req, res) => {
       .populate('department', 'name code')
       .populate('createdBy', 'name email');
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-    await ensureAccessCode(exam);
     res.json({ success: true, exam });
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -98,56 +74,40 @@ const normalizeSectionValue = (value) => String(value || '').trim().toUpperCase(
 const validateExamOverlap = async (examData, excludeExamId = null) => {
   const { department, year, semester, section, sections, startTime, endTime } = examData;
 
+  if (!department || !startTime || !endTime || !year || !semester) return;
+
   const start = new Date(startTime);
   const end = new Date(endTime);
-  
-  const normalizeSection = (value) => String(value || '').trim().toUpperCase();
-  const targetSections = Array.isArray(sections) && sections.length > 0
-    ? sections.map(s => normalizeSection(s))
-    : (section ? [normalizeSection(section)] : []);
 
-  // 1. Duplicate check: Same department, year, semester, section, start time
-  const dupQuery = {
-    department,
-    year,
-    semester,
-    startTime: start,
-  };
-  if (excludeExamId) dupQuery._id = { $ne: excludeExamId };
-  
-  const existingWithSameTime = await Exam.find(dupQuery);
-  const duplicate = existingWithSameTime.find(ex => {
-    const exSections = Array.isArray(ex.sections) && ex.sections.length > 0
-      ? ex.sections.map(s => normalizeSection(s))
-      : (ex.section ? [normalizeSection(ex.section)] : []);
-    
-    return exSections.length === 0 || targetSections.length === 0 ||
-      exSections.some(s => targetSections.includes(s));
-  });
-
-  if (duplicate) {
-    throw new Error('An identical exam already exists with the same department, year, semester, sections, and start time.');
+  if (start >= end) {
+    throw new Error('Start time must be before end time.');
   }
 
-  // 2. Overlap check
   const query = {
+    _id: { $ne: excludeExamId },
     department,
     year,
     semester,
-    status: { $in: ['draft', 'scheduled', 'active'] },
+    status: { $in: ['scheduled', 'active'] },
   };
-  if (excludeExamId) query._id = { $ne: excludeExamId };
 
-  const existingExams = await Exam.find(query);
+  const existingExams = await Exam.find(query).lean();
+
+  const targetSections = Array.isArray(sections) && sections.length > 0
+    ? sections.map(s => normalizeSectionValue(s))
+    : (section ? [normalizeSectionValue(section)] : []);
+
   const overlaps = existingExams.filter(ex => {
     const exSections = Array.isArray(ex.sections) && ex.sections.length > 0
-      ? ex.sections.map(s => normalizeSection(s))
-      : (ex.section ? [normalizeSection(ex.section)] : []);
+      ? ex.sections.map(s => normalizeSectionValue(s))
+      : (ex.section ? [normalizeSectionValue(ex.section)] : []);
 
-    const sectionsOverlap = exSections.length === 0 || targetSections.length === 0 ||
-      exSections.some(s => targetSections.includes(s));
-    
-    if (!sectionsOverlap) return false;
+    const hasCommonSection = targetSections.length === 0 || exSections.length === 0 ||
+      targetSections.includes('ALL') || exSections.includes('ALL') ||
+      targetSections.some(s => exSections.includes(s));
+
+    if (!hasCommonSection) return false;
+
     const exStart = new Date(ex.startTime);
     const exEnd = new Date(ex.endTime);
     return (start < exEnd && end > exStart);
@@ -166,16 +126,13 @@ const createExam = async (req, res) => {
 
     await validateExamOverlap(req.body);
     const examData = { ...req.body, createdBy: req.admin._id };
-    // Always generate server-side — ignore any client-supplied accessCode
     delete examData.accessCode;
     examData.accessCode = generateAccessCode();
 
-    // Empty string cannot be cast to ObjectId (common for multi-subject exams)
     if (!examData.subject) {
       delete examData.subject;
     }
 
-    // For multi-subject, compute totalMarks from subjects
     if (examData.examType === 'multi' && Array.isArray(examData.subjects) && examData.subjects.length > 0) {
       examData.subjects.forEach(s => {
         if (Number(s.passMarks) > Number(s.totalMarks)) {
@@ -185,7 +142,6 @@ const createExam = async (req, res) => {
       examData.totalMarks = examData.subjects.reduce((sum, s) => sum + Number(s.totalMarks || 0), 0);
       examData.passMarks = examData.subjects.reduce((sum, s) => sum + Number(s.passMarks || 0), 0);
       examData.duration = examData.subjects.reduce((sum, s) => sum + Number(s.duration || 0), 0);
-      // Multi-subject exams do not use the single subject ref
       delete examData.subject;
     } else {
       if (Number(examData.passMarks) > Number(examData.totalMarks)) {
@@ -210,10 +166,8 @@ const updateExam = async (req, res) => {
     await validateExamOverlap(req.body, req.params.id);
 
     const updateData = { ...req.body };
-    // Access code is managed only via regenerate endpoint
     delete updateData.accessCode;
 
-    // Empty string cannot be cast to ObjectId
     if (!updateData.subject) {
       delete updateData.subject;
       if (updateData.examType === 'multi') {
@@ -221,7 +175,6 @@ const updateExam = async (req, res) => {
       }
     }
 
-    // For multi-subject, recompute totals from subjects
     if (updateData.examType === 'multi' && Array.isArray(updateData.subjects) && updateData.subjects.length > 0) {
       updateData.subjects.forEach(s => {
         if (Number(s.passMarks) > Number(s.totalMarks)) {
@@ -239,7 +192,6 @@ const updateExam = async (req, res) => {
       }
     }
 
-    // Split $unset from set fields for findByIdAndUpdate
     const unset = updateData.$unset;
     delete updateData.$unset;
     const updateOps = unset ? { $set: updateData, $unset: unset } : updateData;
@@ -284,79 +236,69 @@ const deleteExam = async (req, res) => {
 
 const publishExam = async (req, res) => {
   try {
-    console.log(`[PUBLISH] Requested exam ID: ${req.params.id}`);
-    const exam = await Exam.findById(req.params.id);
+    const exam = await Exam.findById(req.params.id).populate('subject department');
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-    console.log(`[PUBLISH] Loaded exam ID: ${exam._id}`);
-    console.log(`[PUBLISH] Loaded exam title: ${exam.title}`);
-
-    const questionCount = await Question.countDocuments({ exam: req.params.id });
-    if (questionCount === 0) {
-      return res.status(400).json({ success: false, message: 'Add questions before publishing' });
+    if (exam.status !== 'draft') {
+      return res.status(400).json({ success: false, message: 'Exam is already published' });
     }
 
-    // For multi-subject, validate each subject has questions
-    if (exam.examType === 'multi' && exam.subjects.length > 0) {
-      for (let i = 0; i < exam.subjects.length; i++) {
-        const count = await Question.countDocuments({ exam: req.params.id, subjectIndex: i });
-        if (count === 0) {
-          return res.status(400).json({
-            success: false,
-            message: `Subject "${exam.subjects[i].subjectName}" has no questions. Add questions before publishing.`
+    const qCount = await Question.countDocuments({ exam: exam._id });
+    if (qCount === 0) {
+      return res.status(400).json({ success: false, message: 'Cannot publish exam with 0 questions. Please add questions first.' });
+    }
+
+    exam.status = 'scheduled';
+    exam.updateStatus();
+    exam.totalQuestions = qCount;
+    await exam.save();
+
+    const studentQuery = await buildStudentEligibilityQuery(exam, { target: 'all' });
+    const students = await Student.find(studentQuery);
+
+    const EmailQueue = require('../models/EmailQueue');
+    const jobs = students.map(student => ({
+      exam: exam._id,
+      student: student._id,
+      email: student.email,
+      notificationType: 'welcome',
+      status: 'queued',
+      nextRetryTime: new Date()
+    }));
+
+    let queuedCount = 0;
+    let failedStudents = [];
+
+    if (jobs.length > 0) {
+      for (const job of jobs) {
+        try {
+          await EmailQueue.create(job);
+          queuedCount++;
+        } catch (err) {
+          const matchedStudent = students.find(s => s._id.toString() === job.student.toString());
+          failedStudents.push({
+            _id: job.student,
+            name: matchedStudent?.name || 'Unknown',
+            studentId: matchedStudent?.studentId || 'N/A',
+            rollNumber: matchedStudent?.rollNumber || 'N/A',
+            email: job.email,
+            reason: err.code === 11000 ? 'Already queued/sent' : err.message
           });
         }
       }
     }
 
-    exam.status = 'scheduled';
-    exam.totalQuestions = questionCount;
-    await exam.save();
-
-    const { buildStudentEligibilityQuery } = require('../utils/studentEligibility');
-    const studentQuery = await buildStudentEligibilityQuery(exam, { target: 'all' });
-    const eligibleStudents = await Student.find(studentQuery).populate('department');
-
-    const EmailQueue = require('../models/EmailQueue');
-    const queueJobs = eligibleStudents.map(student => ({
-      exam: exam._id,
-      student: student._id,
-      email: student.email,
-      notificationType: 'custom',
-      status: 'queued',
-      nextRetryTime: new Date()
-    }));
-
-    if (queueJobs.length > 0) {
-      try {
-        await EmailQueue.insertMany(queueJobs, { ordered: false });
-      } catch (bulkErr) {
-        if (bulkErr.code !== 11000 && !bulkErr.writeErrors) {
-          console.error('[publishExam] Failed to insert queue jobs:', bulkErr);
-        }
-      }
-    }
+    await req.admin.logActivity('PUBLISH_EXAM', `Published exam: "${exam.title}" (type: ${exam.examType}), queued ${queuedCount} notifications, failed: ${failedStudents.length}`, req.ip);
 
     res.json({
       success: true,
-      examPublished: true,
-      message: 'Exam published successfully. Email notifications are being sent in the background.',
+      message: `Exam published successfully! Total eligible students: ${students.length}. Queued welcome notifications: ${queuedCount}.`,
       exam,
-      emailNotification: {
-        eligible: eligibleStudents.length,
-        attempted: 0,
-        sent: 0,
-        failed: 0,
-        skipped: 0,
-        success: true,
-        error: ''
-      },
-      report: {
-        selectedSections: (Array.isArray(exam.sections) && exam.sections.length > 0) ? exam.sections.join(', ') : (exam.section || 'All Sections'),
-        eligibleCount: eligibleStudents.length,
-        sentCount: 0,
-        failedCount: 0,
-        failedStudents: [],
-        emailServiceError: false
+      publishReport: {
+        examId: exam._id,
+        eligibleCount: students.length,
+        queuedCount,
+        failedCount: failedStudents.length,
+        failedStudents
       }
     });
   } catch (error) {
@@ -364,283 +306,168 @@ const publishExam = async (req, res) => {
   }
 };
 
-const retryPublishNotifications = async (req, res) => {
+const retryFailedPublishNotifications = async (req, res) => {
   try {
     const { studentIds } = req.body;
-    const { id } = req.params; // examId
+    const examId = req.params.id;
+
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
       return res.status(400).json({ success: false, message: 'studentIds array is required' });
     }
 
-    const EmailQueue = require('../models/EmailQueue');
-    const Student = require('../models/Student');
+    const exam = await Exam.findById(examId);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+
     const students = await Student.find({ _id: { $in: studentIds } });
+    const EmailQueue = require('../models/EmailQueue');
 
-    const queueJobs = students.map(student => ({
-      exam: id,
-      student: student._id,
-      email: student.email,
-      notificationType: 'custom',
-      status: 'queued',
-      nextRetryTime: new Date()
-    }));
+    let retriedCount = 0;
+    const failedStudents = [];
 
-    for (const job of queueJobs) {
-      await EmailQueue.findOneAndUpdate(
-        { exam: job.exam, student: job.student, notificationType: job.notificationType },
-        { $set: { status: 'queued', retryCount: 0, nextRetryTime: new Date(), email: job.email } },
-        { upsert: true, new: true }
-      );
+    for (const student of students) {
+      try {
+        await EmailQueue.create({
+          exam: exam._id,
+          student: student._id,
+          email: student.email,
+          notificationType: 'welcome',
+          status: 'queued',
+          nextRetryTime: new Date()
+        });
+        retriedCount++;
+      } catch (err) {
+        failedStudents.push({
+          _id: student._id,
+          name: student.name,
+          studentId: student.studentId,
+          rollNumber: student.rollNumber,
+          email: student.email,
+          reason: err.code === 11000 ? 'Already queued/sent' : err.message
+        });
+      }
     }
 
     res.json({
       success: true,
-      message: 'Retry notification jobs queued successfully.',
-      report: {
-        selectedSections: 'Selected Students',
-        eligibleCount: students.length,
-        sentCount: 0,
-        failedCount: 0,
-        failedStudents: [],
-        emailServiceError: false
-      }
+      message: `Retry processing complete. Successfully queued: ${retriedCount}, failed: ${failedStudents.length}`,
+      retriedCount,
+      failedCount: failedStudents.length,
+      failedStudents
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== EXAM SUBJECTS (Multi-subject) ====================
-
-const getExamSubjects = async (req, res) => {
+const cancelExam = async (req, res) => {
   try {
-    const exam = await Exam.findById(req.params.examId);
+    const exam = await Exam.findById(req.params.id);
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-    res.json({ success: true, subjects: exam.subjects, examType: exam.examType });
+    if (exam.status === 'completed') {
+      return res.status(400).json({ success: false, message: 'Cannot cancel a completed exam' });
+    }
+
+    exam.status = 'cancelled';
+    await exam.save();
+
+    await req.admin.logActivity('CANCEL_EXAM', `Cancelled exam: ${exam.title}`, req.ip);
+
+    res.json({ success: true, message: 'Exam cancelled successfully', exam });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-const addExamSubject = async (req, res) => {
+const duplicateExam = async (req, res) => {
   try {
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    const sourceExam = await Exam.findById(req.params.id);
+    if (!sourceExam) return res.status(404).json({ success: false, message: 'Source exam not found' });
 
-    const { subjectName, subjectCode, duration, totalMarks, passMarks, negativeMarking } = req.body;
-    if (!subjectName || !duration || !totalMarks || passMarks === undefined) {
-      return res.status(400).json({ success: false, message: 'subjectName, duration, totalMarks, passMarks are required' });
-    }
+    const duplicatedData = sourceExam.toObject();
+    delete duplicatedData._id;
+    delete duplicatedData.createdAt;
+    delete duplicatedData.updatedAt;
+    delete duplicatedData.totalQuestions;
 
-    exam.subjects.push({
-      subjectName: subjectName.trim(),
-      subjectCode: (subjectCode || '').trim().toUpperCase(),
-      duration: Number(duration),
-      totalMarks: Number(totalMarks),
-      passMarks: Number(passMarks),
-      negativeMarking: !!negativeMarking,
-      order: exam.subjects.length,
-    });
+    duplicatedData.title = `${duplicatedData.title} (Copy)`;
+    duplicatedData.status = 'draft';
+    duplicatedData.accessCode = generateAccessCode();
+    duplicatedData.createdBy = req.admin._id;
+    duplicatedData.reminderSent24h = false;
+    duplicatedData.reminderSent1h = false;
+    duplicatedData.reminderSent30m = false;
 
-    // Recompute exam totals
-    exam.totalMarks = exam.subjects.reduce((sum, s) => sum + s.totalMarks, 0);
-    exam.passMarks = exam.subjects.reduce((sum, s) => sum + s.passMarks, 0);
-    exam.duration = exam.subjects.reduce((sum, s) => sum + s.duration, 0);
-    exam.examType = 'multi';
+    const duplicatedExam = new Exam(duplicatedData);
+    await duplicatedExam.save();
 
-    await exam.save();
-    res.json({ success: true, message: 'Subject added', subjects: exam.subjects });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const updateExamSubject = async (req, res) => {
-  try {
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-
-    const idx = parseInt(req.params.subjectIndex);
-    if (isNaN(idx) || idx < 0 || idx >= exam.subjects.length) {
-      return res.status(400).json({ success: false, message: 'Invalid subject index' });
-    }
-
-    const { subjectName, subjectCode, duration, totalMarks, passMarks, negativeMarking } = req.body;
-    if (subjectName !== undefined) exam.subjects[idx].subjectName = subjectName.trim();
-    if (subjectCode !== undefined) exam.subjects[idx].subjectCode = subjectCode.trim().toUpperCase();
-    if (duration !== undefined) exam.subjects[idx].duration = Number(duration);
-    if (totalMarks !== undefined) exam.subjects[idx].totalMarks = Number(totalMarks);
-    if (passMarks !== undefined) exam.subjects[idx].passMarks = Number(passMarks);
-    if (negativeMarking !== undefined) exam.subjects[idx].negativeMarking = !!negativeMarking;
-
-    // Recompute totals
-    exam.totalMarks = exam.subjects.reduce((sum, s) => sum + s.totalMarks, 0);
-    exam.passMarks = exam.subjects.reduce((sum, s) => sum + s.passMarks, 0);
-    exam.duration = exam.subjects.reduce((sum, s) => sum + s.duration, 0);
-
-    // Mark subjects as modified (mongoose subdocument)
-    exam.markModified('subjects');
-    await exam.save();
-    res.json({ success: true, message: 'Subject updated', subjects: exam.subjects });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const deleteExamSubject = async (req, res) => {
-  try {
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-
-    const idx = parseInt(req.params.subjectIndex);
-    if (isNaN(idx) || idx < 0 || idx >= exam.subjects.length) {
-      return res.status(400).json({ success: false, message: 'Invalid subject index' });
-    }
-
-    // Remove questions for this subject
-    await Question.deleteMany({ exam: exam._id, subjectIndex: idx });
-
-    // Re-index questions for subjects after the deleted one
-    await Question.updateMany(
-      { exam: exam._id, subjectIndex: { $gt: idx } },
-      { $inc: { subjectIndex: -1 } }
-    );
-
-    exam.subjects.splice(idx, 1);
-
-    // Fix order field
-    exam.subjects.forEach((s, i) => { s.order = i; });
-
-    // Recompute totals
-    if (exam.subjects.length > 0) {
-      exam.totalMarks = exam.subjects.reduce((sum, s) => sum + s.totalMarks, 0);
-      exam.passMarks = exam.subjects.reduce((sum, s) => sum + s.passMarks, 0);
-      exam.duration = exam.subjects.reduce((sum, s) => sum + s.duration, 0);
-    }
-
-    if (exam.subjects.length === 0) exam.examType = 'single';
-
-    exam.markModified('subjects');
-    await exam.save();
-
-    // Update totalQuestions
-    const questionCount = await Question.countDocuments({ exam: exam._id });
-    exam.totalQuestions = questionCount;
-    await exam.save();
-
-    res.json({ success: true, message: 'Subject deleted', subjects: exam.subjects });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-const reorderExamSubjects = async (req, res) => {
-  try {
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-
-    const { order } = req.body; // Array of indices in new order, e.g. [2, 0, 1]
-    if (!Array.isArray(order) || order.length !== exam.subjects.length) {
-      return res.status(400).json({ success: false, message: 'Invalid order array' });
-    }
-
-    const reordered = order.map((oldIdx, newIdx) => ({
-      ...exam.subjects[oldIdx].toObject(),
-      order: newIdx,
-    }));
-
-    // Also update question subjectIndex values to match new order
-    const oldToNew = {};
-    order.forEach((oldIdx, newIdx) => { oldToNew[oldIdx] = newIdx; });
-
-    // Batch update questions
-    const updateOps = Object.entries(oldToNew).map(([oldIdx, newIdx]) =>
-      Question.updateMany(
-        { exam: exam._id, subjectIndex: parseInt(oldIdx) },
-        { $set: { subjectIndex: newIdx } }
-      )
-    );
-    await Promise.all(updateOps);
-
-    exam.subjects = reordered;
-    exam.markModified('subjects');
-    await exam.save();
-
-    res.json({ success: true, message: 'Subjects reordered', subjects: exam.subjects });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// ==================== QUESTIONS ====================
-
-const syncExamMarksAndQuestions = async (examId) => {
-  const exam = await Exam.findById(examId);
-  if (!exam) return;
-  exam.totalQuestions = await Question.countDocuments({ exam: examId });
-  const allQs = await Question.find({ exam: examId });
-  const computedTotalMarks = allQs.reduce((sum, q) => sum + (q.marks || 0), 0);
-  
-  if (exam.examType !== 'multi') {
-    if (computedTotalMarks > 0) {
-      exam.totalMarks = computedTotalMarks;
-      // ensure passMarks <= totalMarks
-      if (exam.passMarks > exam.totalMarks) {
-        exam.passMarks = exam.totalMarks;
-      }
-    }
-  } else {
-    // For multi-subject, sync the subject totalMarks based on their questions
-    const subjectMarksMap = {};
-    allQs.forEach(q => {
-      const idx = q.subjectIndex || 0;
-      subjectMarksMap[idx] = (subjectMarksMap[idx] || 0) + (q.marks || 0);
-    });
-    
-    if (exam.subjects && exam.subjects.length > 0) {
-      exam.subjects.forEach((s, idx) => {
-        const computedSubjTotal = subjectMarksMap[idx] || 0;
-        if (computedSubjTotal > 0) {
-          s.totalMarks = computedSubjTotal;
-          if (s.passMarks > s.totalMarks) {
-            s.passMarks = s.totalMarks;
-          }
-        }
+    const sourceQuestions = await Question.find({ exam: req.params.id }).lean();
+    if (sourceQuestions.length > 0) {
+      const duplicatedQuestions = sourceQuestions.map(q => {
+        delete q._id;
+        delete q.createdAt;
+        delete q.updatedAt;
+        q.exam = duplicatedExam._id;
+        return q;
       });
-      exam.totalMarks = exam.subjects.reduce((sum, s) => sum + s.totalMarks, 0);
-      exam.passMarks = exam.subjects.reduce((sum, s) => sum + s.passMarks, 0);
+      await Question.insertMany(duplicatedQuestions);
     }
+
+    const populated = await duplicatedExam.populate(['subject', 'department', 'createdBy']);
+
+    await req.admin.logActivity('DUPLICATE_EXAM', `Duplicated exam "${sourceExam.title}" to "${duplicatedExam.title}"`, req.ip);
+
+    res.status(201).json({
+      success: true,
+      message: 'Exam duplicated successfully (saved as Draft)',
+      exam: populated
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
   }
-  await exam.save();
 };
 
-const getQuestions = async (req, res) => {
+const getQuestionsByExamId = async (req, res) => {
   try {
-    const query = { exam: req.params.examId };
-    // Support ?subjectIndex=N filter for multi-subject
-    if (req.query.subjectIndex !== undefined) {
-      query.subjectIndex = parseInt(req.query.subjectIndex);
-    }
-    const questions = await Question.find(query).sort({ subjectIndex: 1, order: 1, createdAt: 1 });
+    const questions = await Question.find({ exam: req.params.id }).sort({ order: 1, createdAt: 1 });
     res.json({ success: true, questions, count: questions.length });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-const addQuestion = async (req, res) => {
+const addQuestionToExam = async (req, res) => {
   try {
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    const { questionText, options, correctAnswer, marks, topic, order, subjectIndex } = req.body;
+    const examId = req.params.id;
 
-    const subjectIndex = req.body.subjectIndex !== undefined ? parseInt(req.body.subjectIndex) : 0;
-    const count = await Question.countDocuments({ exam: req.params.examId, subjectIndex });
-    const question = new Question({ ...req.body, exam: req.params.examId, subjectIndex, order: count + 1 });
+    if (!questionText || !options || !correctAnswer || marks === undefined) {
+      return res.status(400).json({ success: false, message: 'Question text, options, correct answer, and marks are required' });
+    }
+
+    const exam = await Exam.findById(examId);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    if (exam.status !== 'draft') {
+      return res.status(400).json({ success: false, message: 'Cannot add questions to a published exam' });
+    }
+
+    const question = new Question({
+      exam: examId,
+      questionText,
+      options,
+      correctAnswer,
+      marks,
+      topic: topic || '',
+      order: order || 0,
+      subjectIndex: subjectIndex !== undefined ? subjectIndex : 0,
+    });
+
     await question.save();
 
-    await syncExamMarksAndQuestions(req.params.examId);
+    const qCount = await Question.countDocuments({ exam: examId });
+    exam.totalQuestions = qCount;
+    await exam.save();
 
-    res.status(201).json({ success: true, message: 'Question added', question });
+    res.status(201).json({ success: true, message: 'Question added successfully', question });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -648,12 +475,28 @@ const addQuestion = async (req, res) => {
 
 const updateQuestion = async (req, res) => {
   try {
-    const question = await Question.findByIdAndUpdate(req.params.questionId, req.body, { new: true });
+    const { questionText, options, correctAnswer, marks, topic, order, subjectIndex } = req.body;
+    const { questionId } = req.params;
+
+    const question = await Question.findById(questionId);
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
 
-    await syncExamMarksAndQuestions(question.exam);
+    const exam = await Exam.findById(question.exam);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    if (exam.status !== 'draft') {
+      return res.status(400).json({ success: false, message: 'Cannot update questions of a published exam' });
+    }
 
-    res.json({ success: true, question });
+    if (questionText) question.questionText = questionText;
+    if (options) question.options = options;
+    if (correctAnswer) question.correctAnswer = correctAnswer;
+    if (marks !== undefined) question.marks = marks;
+    if (topic !== undefined) question.topic = topic;
+    if (order !== undefined) question.order = order;
+    if (subjectIndex !== undefined) question.subjectIndex = subjectIndex;
+
+    await question.save();
+    res.json({ success: true, message: 'Question updated successfully', question });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -661,50 +504,71 @@ const updateQuestion = async (req, res) => {
 
 const deleteQuestion = async (req, res) => {
   try {
-    const question = await Question.findById(req.params.questionId);
+    const { questionId } = req.params;
+    const question = await Question.findById(questionId);
     if (!question) return res.status(404).json({ success: false, message: 'Question not found' });
-    const examId = question.exam;
 
-    await Question.findByIdAndDelete(req.params.questionId);
-    await syncExamMarksAndQuestions(examId);
+    const exam = await Exam.findById(question.exam);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    if (exam.status !== 'draft') {
+      return res.status(400).json({ success: false, message: 'Cannot delete questions from a published exam' });
+    }
 
-    res.json({ success: true, message: 'Question deleted' });
+    await Question.findByIdAndDelete(questionId);
+
+    const qCount = await Question.countDocuments({ exam: exam._id });
+    exam.totalQuestions = qCount;
+    await exam.save();
+
+    res.json({ success: true, message: 'Question deleted successfully' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-const bulkUploadQuestions = async (req, res) => {
+const importQuestionsExcel = async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ success: false, message: 'No file uploaded' });
-
-    const { questions, errors } = parseQuestionsFromExcel(req.file.buffer);
-
-    if (questions.length === 0) {
-      return res.status(400).json({ success: false, message: 'No valid questions found', errors });
+    const examId = req.params.id;
+    const exam = await Exam.findById(examId);
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    if (exam.status !== 'draft') {
+      return res.status(400).json({ success: false, message: 'Cannot import questions to a published exam' });
     }
 
-    const exam = await Exam.findById(req.params.examId);
-    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+    if (!req.file) {
+      return res.status(400).json({ success: false, message: 'Please upload an Excel file' });
+    }
 
-    const subjectIndex = req.body.subjectIndex !== undefined ? parseInt(req.body.subjectIndex) : 0;
-    const existingCount = await Question.countDocuments({ exam: req.params.examId, subjectIndex });
-    const questionsWithExam = questions.map((q, i) => ({
-      ...q,
-      exam: req.params.examId,
-      subjectIndex,
-      order: existingCount + i + 1,
+    const { questions, errors } = await parseQuestionsFromExcel(req.file.buffer);
+
+    if (questions.length === 0 && errors.length > 0) {
+      return res.status(400).json({ success: false, message: errors[0], errors });
+    }
+
+    const formattedQuestions = questions.map(q => ({
+      exam: examId,
+      questionText: q.questionText,
+      options: q.options,
+      correctAnswer: q.correctAnswer,
+      marks: q.marks || 1,
+      topic: q.topic || '',
+      order: q.order || 0,
+      subjectIndex: q.subjectIndex !== undefined ? q.subjectIndex : 0,
     }));
 
-    await Question.insertMany(questionsWithExam);
+    await Question.insertMany(formattedQuestions);
 
-    await syncExamMarksAndQuestions(req.params.examId);
+    const qCount = await Question.countDocuments({ exam: examId });
+    exam.totalQuestions = qCount;
+    await exam.save();
 
-    res.json({
+    await req.admin.logActivity('IMPORT_QUESTIONS_EXCEL', `Imported ${formattedQuestions.length} questions from Excel to: ${exam.title}`, req.ip);
+
+    res.status(201).json({
       success: true,
-      message: `${questions.length} questions uploaded successfully`,
-      uploaded: questions.length,
-      errors: errors.length > 0 ? errors : undefined,
+      message: `Successfully imported ${formattedQuestions.length} questions!`,
+      importedCount: formattedQuestions.length,
+      errors
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
@@ -713,300 +577,199 @@ const bulkUploadQuestions = async (req, res) => {
 
 const downloadQuestionTemplate = async (req, res) => {
   try {
-    const buffer = generateQuestionTemplate();
+    const { isMulti } = req.query;
+    const buffer = await generateQuestionTemplate(isMulti === 'true');
+
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', 'attachment; filename=question_template.xlsx');
+    res.setHeader('Content-Disposition', `attachment; filename=question_import_template_${isMulti === 'true' ? 'multi' : 'single'}.xlsx`);
+
     res.send(buffer);
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-// ==================== FORCE SUBMIT ====================
-
-const forceSubmitStudent = async (req, res) => {
+const downloadExamAuditReportPDF = async (req, res) => {
   try {
-    const { studentId, examId } = req.params;
+    const exam = await Exam.findById(req.params.id).populate('subject department createdBy');
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
 
-    const result = await Result.findOne({ student: studentId, exam: examId, status: 'in_progress' });
-    if (!result) return res.status(404).json({ success: false, message: 'Active exam session not found' });
+    const results = await Result.find({ exam: exam._id }).populate('student', 'name studentId rollNumber');
 
-    const questions = await Question.find({ exam: examId });
-    const exam = await Exam.findById(examId);
+    const doc = new PDFDocument({ margin: 50 });
+    let filename = `Exam_Audit_Report_${exam.title.replace(/\s+/g, '_')}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename=${filename}`);
 
-    const evaluation = evaluateExamResult(questions, result.savedProgress?.answers, result.savedProgress?.optionMappings, exam);
+    doc.pipe(res);
 
-    result.status = 'force_submitted';
-    result.submittedAt = new Date();
-    result.obtainedMarks = evaluation.obtainedMarks;
-    result.totalMarks = evaluation.totalMarks;
-    result.correctAnswers = evaluation.correctAnswers;
-    result.wrongAnswers = evaluation.wrongAnswers;
-    result.skippedAnswers = evaluation.skippedAnswers;
-    result.percentage = evaluation.percentage;
-    result.isPassed = evaluation.isPassed;
-    result.grade = evaluation.grade;
-    result.subjectResults = evaluation.subjectResults;
-    await result.save();
+    doc.rect(0, 0, doc.page.width, 20).fill('#1e3a8a');
 
-    await Student.findByIdAndUpdate(studentId, { currentExam: null });
+    doc.fillColor('#1e3a8a').font('Helvetica-Bold').fontSize(24).text('EXAMINATION AUDIT REPORT', { align: 'center' });
+    doc.moveDown();
 
-    res.json({ success: true, message: 'Student exam force submitted' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
+    doc.strokeColor('#cbd5e1').lineWidth(1).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+    doc.moveDown();
 
-// ==================== RESULTS ====================
+    doc.fontSize(14).fillColor('#334155').text('Exam Information', { underline: true });
+    doc.moveDown(0.5);
 
-const computeResultsList = async (examId, query) => {
-  const { department, year, semester, section, examStatus, resultStatus, search, dateFrom, dateTo } = query;
-
-  const exam = await Exam.findById(examId).populate('department subject');
-  if (!exam) return [];
-
-  // Find all students matching exam's target
-  const studentQuery = { isActive: true };
-  const examDeptId = exam.department?._id || exam.department;
-  if (examDeptId) studentQuery.department = examDeptId;
-  if (exam.year) studentQuery.year = String(exam.year).trim();
-  if (exam.semester) studentQuery.semester = String(exam.semester).trim();
-  if (exam.section && exam.section.trim() !== '') {
-    studentQuery.section = exam.section.trim().toUpperCase();
-  }
-
-  const students = await Student.find(studentQuery).populate('department', 'name code').select('-password');
-
-  // Find all results for this exam
-  const results = await Result.find({ exam: examId });
-
-  // Map of studentId -> result
-  const resultMap = {};
-  results.forEach(r => {
-    resultMap[r.student.toString()] = r;
-  });
-
-  const now = new Date();
-  const startTime = new Date(exam.startTime);
-  const endTime = new Date(exam.endTime);
-
-  let list = students.map(student => {
-    const result = resultMap[student._id.toString()];
-    let currentStatus = 'Not Started';
-    if (!result) {
-      if (now < startTime) currentStatus = 'Waiting';
-      else if (now > endTime) currentStatus = 'Absent';
-      else currentStatus = 'Not Started';
-    } else {
-      if (result.violations >= (exam.maxViolations || 3)) currentStatus = 'Disqualified';
-      else if (result.status === 'in_progress') currentStatus = 'In Progress (Writing Exam)';
-      else if (result.status === 'auto_submitted') currentStatus = 'Auto Submitted';
-      else if (result.status === 'submitted' || result.status === 'force_submitted') {
-        currentStatus = result.isPassed ? 'Completed' : 'Submitted';
-      }
-    }
-
-    return {
-      _id: result ? result._id : null,
-      student: {
-        _id: student._id,
-        studentId: student.studentId,
-        name: student.name,
-        rollNumber: student.rollNumber,
-        department: student.department,
-        year: student.year,
-        semester: student.semester,
-        section: student.section,
-        email: student.email,
-        mobile: student.mobile,
-        isActive: student.isActive
-      },
-      exam: {
-        _id: exam._id,
-        title: exam.title,
-        subjects: exam.examType === 'multi' ? exam.subjects.map(s => s.subjectName) : [exam.subject?.name],
-        examType: exam.examType,
-        subject: exam.subject,
-        startTime: exam.startTime,
-        endTime: exam.endTime,
-        duration: exam.duration,
-        totalMarks: exam.totalMarks,
-        passMarks: exam.passMarks
-      },
-      obtainedMarks: result ? result.obtainedMarks : 0,
-      totalMarks: result ? result.totalMarks : exam.totalMarks,
-      percentage: result ? result.percentage : 0,
-      isPassed: result ? result.isPassed : false,
-      grade: result ? result.grade : '—',
-      submittedAt: result ? result.submittedAt : null,
-      timeSpent: result ? result.timeSpent : 0,
-      violations: result ? result.violations : 0,
-      status: currentStatus,
-      resultId: result ? result._id : null,
-      subjectResults: result ? result.subjectResults : []
-    };
-  });
-
-  // Apply filters
-  if (department) {
-    list = list.filter(item => item.student.department?._id?.toString() === department);
-  }
-  if (year) {
-    list = list.filter(item => String(item.student.year).trim() === String(year).trim());
-  }
-  if (semester) {
-    list = list.filter(item => String(item.student.semester).trim() === String(semester).trim());
-  }
-  if (section) {
-    list = list.filter(item => String(item.student.section).trim().toUpperCase() === String(section).trim().toUpperCase());
-  }
-  if (examStatus) {
-    list = list.filter(item => item.status === examStatus);
-  }
-  if (resultStatus) {
-    const wantPass = resultStatus.toLowerCase() === 'pass';
-    list = list.filter(item => item.status !== 'Waiting' && item.status !== 'Not Started' && item.status !== 'Absent' && item.status !== 'In Progress (Writing Exam)' && item.isPassed === wantPass);
-  }
-  if (dateFrom) {
-    const fromDate = new Date(dateFrom);
-    list = list.filter(item => item.submittedAt && new Date(item.submittedAt) >= fromDate);
-  }
-  if (dateTo) {
-    const toDate = new Date(dateTo);
-    list = list.filter(item => item.submittedAt && new Date(item.submittedAt) <= toDate);
-  }
-  if (search) {
-    const s = search.toLowerCase().trim();
-    list = list.filter(item =>
-      item.student.name.toLowerCase().includes(s) ||
-      item.student.studentId.toLowerCase().includes(s) ||
-      item.student.rollNumber.toLowerCase().includes(s) ||
-      item.student.email.toLowerCase().includes(s) ||
-      item.student.mobile.includes(s)
-    );
-  }
-
-  // Assign Ranks based on obtainedMarks of finished students
-  const gradedList = list.filter(item => item.status !== 'Waiting' && item.status !== 'Not Started' && item.status !== 'Absent' && item.status !== 'In Progress (Writing Exam)')
-    .sort((a, b) => b.obtainedMarks - a.obtainedMarks);
-  
-  const rankMap = {};
-  gradedList.forEach((item, i) => {
-    rankMap[item.student._id.toString()] = i + 1;
-  });
-
-  return list.map(item => ({
-    ...item,
-    rank: rankMap[item.student._id.toString()] || '—'
-  }));
-};
-
-const getExamResults = async (req, res) => {
-  try {
-    const results = await computeResultsList(req.params.examId, req.query);
-    res.json({ success: true, results });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// ==================== EXCEL EXPORT ====================
-
-const exportResultsExcel = async (req, res) => {
-  try {
-    const results = await computeResultsList(req.params.examId, req.query);
-    const workbook = new ExcelJS.Workbook();
-    const sheet = workbook.addWorksheet('Results');
-
-    const exam = results[0]?.exam;
-    const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const subjectNames = isMulti ? exam.subjects : [];
-
-    sheet.mergeCells('A1:Q1');
-    sheet.getCell('A1').value = 'SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY';
-    sheet.getCell('A1').font = { bold: true, size: 14 };
-    sheet.getCell('A1').alignment = { horizontal: 'center' };
-
-    sheet.mergeCells('A2:Q2');
-    sheet.getCell('A2').value = `Result Report: ${exam?.title || 'Exam'}`;
-    sheet.getCell('A2').font = { bold: true, size: 12 };
-    sheet.getCell('A2').alignment = { horizontal: 'center' };
-    sheet.addRow([]);
-
-    const baseColumns = [
-      { header: 'Rank', key: 'rank', width: 8 },
-      { header: 'Student ID', key: 'studentId', width: 18 },
-      { header: 'Name', key: 'name', width: 25 },
-      { header: 'Roll No', key: 'rollNumber', width: 15 },
-      { header: 'Department', key: 'department', width: 20 },
-      { header: 'Year', key: 'year', width: 8 },
-      { header: 'Semester', key: 'semester', width: 10 },
-      { header: 'Section', key: 'section', width: 10 },
-      { header: 'Email', key: 'email', width: 25 },
-      { header: 'Mobile', key: 'mobile', width: 15 },
+    const infoTable = [
+      ['Title:', exam.title, 'Department:', exam.department?.name || 'N/A'],
+      ['Subject:', exam.subject?.name || 'Multi-Subject', 'Semester:', `Semester ${exam.semester}`],
+      ['Start Time:', formatDateTime(exam.startTime), 'End Time:', formatDateTime(exam.endTime)],
+      ['Duration:', `${exam.duration} mins`, 'Total Marks:', String(exam.totalMarks)],
+      ['Status:', exam.status.toUpperCase(), 'Created By:', exam.createdBy?.name || 'N/A']
     ];
 
-    const subjectColumns = subjectNames.map((sn, i) => [
-      { header: `${sn} (Marks)`, key: `subj_${i}_marks`, width: 16 },
-      { header: `${sn} (Status)`, key: `subj_${i}_status`, width: 14 },
-    ]).flat();
+    let startY = doc.y;
+    infoTable.forEach((row) => {
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#475569').text(row[0], 50, doc.y, { width: 80, continued: true });
+      doc.font('Helvetica').fillColor('#0f172a').text(row[1], { width: 180 });
+      doc.font('Helvetica-Bold').fillColor('#475569').text(row[2], 300, startY, { width: 80, continued: true });
+      doc.font('Helvetica').fillColor('#0f172a').text(row[3], { width: 180 });
+      doc.moveDown(0.5);
+      startY = doc.y;
+    });
 
-    const trailingColumns = [
-      { header: 'Total Marks', key: 'total', width: 12 },
-      { header: 'Obtained', key: 'obtained', width: 12 },
-      { header: 'Percentage', key: 'percentage', width: 12 },
-      { header: 'Grade', key: 'grade', width: 10 },
-      { header: 'Exam Status', key: 'status', width: 20 },
-      { header: 'Violations', key: 'violations', width: 12 },
+    doc.moveDown();
+    doc.strokeColor('#cbd5e1').lineWidth(1).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+    doc.moveDown();
+
+    doc.fontSize(14).fillColor('#334155').text('Student Performance Summary', { underline: true });
+    doc.moveDown(0.5);
+
+    const totalStudents = results.length;
+    const passed = results.filter(r => r.isPassed).length;
+    const failed = results.filter(r => !r.isPassed && r.status !== 'in_progress').length;
+    const writing = results.filter(r => r.status === 'in_progress').length;
+
+    const summaryTable = [
+      ['Total Attempts:', String(totalStudents), 'Passed Students:', String(passed)],
+      ['Failed Students:', String(failed), 'Active/Writing:', String(writing)]
     ];
 
-    sheet.columns = [...baseColumns, ...subjectColumns, ...trailingColumns];
+    startY = doc.y;
+    summaryTable.forEach((row) => {
+      doc.font('Helvetica-Bold').fontSize(10).fillColor('#475569').text(row[0], 50, doc.y, { width: 100, continued: true });
+      doc.font('Helvetica').fillColor('#0f172a').text(row[1], { width: 150 });
+      doc.font('Helvetica-Bold').fillColor('#475569').text(row[2], 300, startY, { width: 100, continued: true });
+      doc.font('Helvetica').fillColor('#0f172a').text(row[3], { width: 150 });
+      doc.moveDown(0.5);
+      startY = doc.y;
+    });
 
-    const headerRow = sheet.getRow(4);
-    headerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
-    headerRow.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FF1E40AF' } };
+    doc.moveDown();
+    doc.strokeColor('#cbd5e1').lineWidth(1).moveTo(50, doc.y).lineTo(doc.page.width - 50, doc.y).stroke();
+    doc.moveDown();
+
+    doc.fontSize(14).fillColor('#334155').text('Detailed Student Logs', { underline: true });
+    doc.moveDown();
+
+    let tableY = doc.y;
+    doc.rect(50, tableY, doc.page.width - 100, 20).fill('#f1f5f9');
+    doc.fillColor('#475569').font('Helvetica-Bold').fontSize(9);
+    doc.text('Student ID', 55, tableY + 5, { width: 80 });
+    doc.text('Name', 140, tableY + 5, { width: 120 });
+    doc.text('Status', 270, tableY + 5, { width: 80 });
+    doc.text('Marks', 360, tableY + 5, { width: 50 });
+    doc.text('Violations', 420, tableY + 5, { width: 60 });
+    doc.text('Disqualified', 490, tableY + 5, { width: 60 });
+
+    doc.moveDown(0.8);
 
     results.forEach((r) => {
-      const rowData = {
-        rank: r.rank,
-        studentId: r.student?.studentId,
-        name: r.student?.name,
-        rollNumber: r.student?.rollNumber,
-        department: r.student?.department?.name || 'N/A',
-        year: r.student?.year || '',
-        semester: r.student?.semester || '',
-        section: r.student?.section || '',
-        email: r.student?.email || '',
-        mobile: r.student?.mobile || '',
-        total: r.totalMarks,
-        obtained: r.obtainedMarks,
-        percentage: `${(r.percentage || 0).toFixed(2)}%`,
-        grade: r.grade,
-        status: r.status,
-        violations: r.violations,
-      };
-
-      if (isMulti && r.subjectResults) {
-        subjectNames.forEach((sn, si) => {
-          const sr = r.subjectResults.find(x => x.subjectIndex === si);
-          rowData[`subj_${si}_marks`] = sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : 'N/A';
-          rowData[`subj_${si}_status`] = sr ? (sr.isPassed ? 'PASS' : 'FAIL') : 'N/A';
-        });
+      if (doc.y > doc.page.height - 80) {
+        doc.addPage();
+        tableY = 40;
+        doc.rect(50, tableY, doc.page.width - 100, 20).fill('#f1f5f9');
+        doc.fillColor('#475569').font('Helvetica-Bold').fontSize(9);
+        doc.text('Student ID', 55, tableY + 5, { width: 80 });
+        doc.text('Name', 140, tableY + 5, { width: 120 });
+        doc.text('Status', 270, tableY + 5, { width: 80 });
+        doc.text('Marks', 360, tableY + 5, { width: 50 });
+        doc.text('Violations', 420, tableY + 5, { width: 60 });
+        doc.text('Disqualified', 490, tableY + 5, { width: 60 });
+        doc.moveDown(0.8);
       }
 
-      const row = sheet.addRow(rowData);
-      const statusCell = row.getCell('status');
-      const hasTaken = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
-      const isPassedVal = hasTaken && r.isPassed;
-      statusCell.fill = {
-        type: 'pattern', pattern: 'solid',
-        fgColor: { argb: isPassedVal ? 'FF16A34A' : (hasTaken ? 'FFDC2626' : 'FF64748B') }
-      };
-      statusCell.font = { color: { argb: 'FFFFFFFF' }, bold: true };
+      const isDisqualified = r.violations >= (exam.maxViolations || 3);
+      const studentId = r.student?.studentId || 'N/A';
+      const studentName = r.student?.name || 'N/A';
+
+      doc.font('Helvetica').fontSize(9).fillColor('#0f172a');
+      doc.text(studentId, 55, doc.y, { width: 80, continued: true });
+      doc.text(studentName, 140, doc.y, { width: 120, continued: true });
+      doc.text(r.status.toUpperCase(), 270, doc.y, { width: 80, continued: true });
+      doc.text(r.status === 'in_progress' ? '—' : `${r.obtainedMarks}/${r.totalMarks}`, 360, doc.y, { width: 50, continued: true });
+      doc.text(String(r.violations), 420, doc.y, { width: 60, continued: true });
+      doc.text(isDisqualified ? 'YES' : 'NO', 490, doc.y, { width: 60 });
+      doc.moveDown(0.5);
+    });
+
+    doc.end();
+  } catch (error) {
+    console.error('Failed to export PDF:', error);
+  }
+};
+
+const exportExamPerformanceExcel = async (req, res) => {
+  try {
+    const exam = await Exam.findById(req.params.id).populate('subject department');
+    if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
+
+    const results = await Result.find({ exam: exam._id }).populate('student', 'name studentId rollNumber branch section');
+
+    const workbook = new ExcelJS.Workbook();
+    const sheet = workbook.addWorksheet('Exam Performance');
+
+    sheet.columns = [
+      { header: 'Student ID', key: 'studentId', width: 15 },
+      { header: 'Roll Number', key: 'rollNumber', width: 15 },
+      { header: 'Name', key: 'name', width: 25 },
+      { header: 'Section', key: 'section', width: 10 },
+      { header: 'Branch', key: 'branch', width: 15 },
+      { header: 'Status', key: 'status', width: 15 },
+      { header: 'Obtained Marks', key: 'obtainedMarks', width: 15 },
+      { header: 'Total Marks', key: 'totalMarks', width: 15 },
+      { header: 'Percentage', key: 'percentage', width: 12 },
+      { header: 'Grade', key: 'grade', width: 10 },
+      { header: 'Passed', key: 'isPassed', width: 10 },
+      { header: 'Violations', key: 'violations', width: 12 },
+      { header: 'Disqualified', key: 'disqualified', width: 15 },
+      { header: 'Time Spent (s)', key: 'timeSpent', width: 15 }
+    ];
+
+    sheet.getRow(1).font = { bold: true };
+    sheet.getRow(1).fill = {
+      type: 'pattern',
+      pattern: 'solid',
+      fgColor: { argb: 'FFE2E8F0' }
+    };
+
+    results.forEach(r => {
+      const isDisqualified = r.violations >= (exam.maxViolations || 3);
+      sheet.addRow({
+        studentId: r.student?.studentId || 'N/A',
+        rollNumber: r.student?.rollNumber || 'N/A',
+        name: r.student?.name || 'N/A',
+        section: r.student?.section || '—',
+        branch: r.student?.branch || 'N/A',
+        status: r.status.toUpperCase(),
+        obtainedMarks: r.status === 'in_progress' ? '—' : r.obtainedMarks,
+        totalMarks: r.totalMarks,
+        percentage: r.status === 'in_progress' ? '—' : r.percentage.toFixed(2),
+        grade: r.status === 'in_progress' ? '—' : r.grade,
+        isPassed: r.status === 'in_progress' ? '—' : (r.isPassed ? 'YES' : 'NO'),
+        violations: r.violations,
+        disqualified: isDisqualified ? 'YES' : 'NO',
+        timeSpent: r.timeSpent || 0
+      });
     });
 
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
-    res.setHeader('Content-Disposition', `attachment; filename=results_${req.params.examId}.xlsx`);
+    res.setHeader('Content-Disposition', `attachment; filename=Exam_Performance_${exam.title.replace(/\s+/g, '_')}.xlsx`);
+
     await workbook.xlsx.write(res);
     res.end();
   } catch (error) {
@@ -1014,185 +777,23 @@ const exportResultsExcel = async (req, res) => {
   }
 };
 
-// ==================== CSV EXPORT ====================
-
-const exportResultsCSV = async (req, res) => {
-  try {
-    const results = await computeResultsList(req.params.examId, req.query);
-    const exam = results[0]?.exam;
-    const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const subjectNames = isMulti ? exam.subjects : [];
-    const examTitle = exam?.title || 'Exam';
-
-    let headerParts = ['Rank', 'Student ID', 'Name', 'Roll No', 'Department', 'Year', 'Semester', 'Section', 'Email', 'Mobile'];
-    if (isMulti) {
-      subjectNames.forEach(sn => {
-        headerParts.push(`"${sn} Marks"`, `"${sn} Status"`);
-      });
-    } else {
-      headerParts.push('Subject');
-    }
-    headerParts = [...headerParts, 'Total Marks', 'Obtained', 'Percentage', 'Grade', 'Exam Status', 'Violations'];
-    const header = headerParts.join(',') + '\n';
-
-    const rows = results.map((r) => {
-      const parts = [
-        r.rank,
-        r.student?.studentId || '',
-        `"${r.student?.name || ''}"`,
-        r.student?.rollNumber || '',
-        `"${r.student?.department?.name || ''}"`,
-        r.student?.year || '',
-        r.student?.semester || '',
-        r.student?.section || '',
-        r.student?.email || '',
-        r.student?.mobile || '',
-      ];
-
-      if (isMulti) {
-        subjectNames.forEach((sn, si) => {
-          const sr = r.subjectResults?.find(x => x.subjectIndex === si);
-          parts.push(sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : 'N/A');
-          parts.push(sr ? (sr.isPassed ? 'PASS' : 'FAIL') : 'N/A');
-        });
-      } else {
-        parts.push(`"${exam?.subject?.name || 'N/A'}"`);
-      }
-
-      parts.push(
-        r.totalMarks,
-        r.obtainedMarks,
-        `${(r.percentage || 0).toFixed(2)}%`,
-        r.grade,
-        `"${r.status}"`,
-        r.violations,
-      );
-      return parts.join(',');
-    }).join('\n');
-
-    const csv = header + rows;
-    res.setHeader('Content-Type', 'text/csv');
-    res.setHeader('Content-Disposition', `attachment; filename=results_${examTitle.replace(/\s+/g, '_')}.csv`);
-    res.send(csv);
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
-// ==================== PDF EXPORT ====================
-
-const exportResultsPDF = async (req, res) => {
-  try {
-    const results = await computeResultsList(req.params.examId, req.query);
-    const exam = results[0]?.exam;
-    const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
-    res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename=results_${req.params.examId}.pdf`);
-    doc.pipe(res);
-
-    // Header
-    doc.rect(0, 0, doc.page.width, 80).fill('#1e3a8a');
-    doc.fillColor('white').fontSize(16).font('Helvetica-Bold')
-      .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 30, 18, { align: 'center' });
-    const subjectLabel = isMulti
-      ? `Subjects: ${exam.subjects.join(', ')}`
-      : `Subject: ${exam?.subject?.name || '—'}`;
-    doc.fontSize(11).font('Helvetica')
-      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${formatDateTime(new Date())}`, 30, 44, { align: 'center' });
-
-    // Stats bar
-    const total = results.length;
-    const submittedCount = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status)).length;
-    const passed = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) && r.isPassed).length;
-    const avgPct = submittedCount > 0 ? (results.reduce((s, r) => s + (['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) ? (r.percentage || 0) : 0), 0) / submittedCount).toFixed(1) : 0;
-    doc.rect(0, 80, doc.page.width, 28).fill('#0f172a');
-    doc.fillColor('#94a3b8').font('Helvetica').fontSize(9)
-      .text(`Total: ${total}   |   Submitted: ${submittedCount}   |   Passed: ${passed}   |   Failed: ${submittedCount - passed}   |   Avg Score: ${avgPct}%`, 30, 89, { align: 'center' });
-
-    // Table Columns
-    const cols = isMulti
-      ? [20, 45, 80, 45, 60, 45, 45, 50, ...exam.subjects.map(() => [35, 30]).flat(), 35, 30, 30, 25, 40]
-      : [25, 50, 90, 50, 70, 50, 50, 60, 100, 35, 35, 30, 30, 50];
-    const headers = isMulti
-      ? ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', ...exam.subjects.map(s => [`${s.slice(0, 5)}`, 'Status']).flat(), 'Total', 'Marks', '%', 'Grd', 'Status']
-      : ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', 'Subject', 'Total', 'Marks', '%', 'Grade', 'Status'];
-
-    let y = 120;
-    doc.rect(30, y, doc.page.width - 60, 20).fill('#1e40af');
-    doc.fillColor('white').font('Helvetica-Bold').fontSize(6.5);
-    let x = 32;
-    headers.forEach((h, i) => { doc.text(h, x, y + 6, { width: cols[i] - 2 }); x += cols[i]; });
-    y += 20;
-
-    results.forEach((r, idx) => {
-      const rowFill = idx % 2 === 0 ? '#f8fafc' : 'white';
-      doc.rect(30, y, doc.page.width - 60, 18).fill(rowFill);
-      doc.fillColor('#1e293b').font('Helvetica').fontSize(6.5);
-      x = 32;
-
-      const vals = isMulti
-        ? [
-          String(r.rank),
-          r.student?.studentId || '',
-          r.student?.name || '',
-          r.student?.rollNumber || '',
-          r.student?.department?.code || '',
-          String(r.student?.year || ''),
-          String(r.student?.semester || ''),
-          r.student?.section || '',
-          ...exam.subjects.map((s, si) => {
-            const sr = r.subjectResults?.find(x => x.subjectIndex === si);
-            return [sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : '-', sr ? (sr.isPassed ? 'PASS' : 'FAIL') : '-'];
-          }).flat(),
-          String(r.totalMarks),
-          String(r.obtainedMarks),
-          `${(r.percentage || 0).toFixed(1)}%`,
-          r.grade,
-          r.status,
-        ]
-        : [
-          String(r.rank),
-          r.student?.studentId || '',
-          r.student?.name || '',
-          r.student?.rollNumber || '',
-          r.student?.department?.code || '',
-          String(r.student?.year || ''),
-          String(r.student?.semester || ''),
-          r.student?.section || '',
-          r.exam?.subject?.name || '',
-          String(r.totalMarks),
-          String(r.obtainedMarks),
-          `${(r.percentage || 0).toFixed(1)}%`,
-          r.grade,
-          r.status,
-        ];
-
-      vals.forEach((v, i) => {
-        const isStatusCol = i === vals.length - 1;
-        const hasTaken = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
-        const isPassedVal = hasTaken && r.isPassed;
-        doc.fillColor(isStatusCol ? (isPassedVal ? '#15803d' : (hasTaken ? '#b91c1c' : '#64748b')) : '#1e293b')
-          .text(v, x, y + 5, { width: cols[i] - 2 });
-        x += cols[i];
-      });
-
-      y += 18;
-      if (y > doc.page.height - 60) { doc.addPage({ layout: 'landscape' }); y = 40; }
-    });
-
-    doc.end();
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
-};
-
 module.exports = {
-  getExams, getExamById, createExam, updateExam, deleteExam, publishExam, retryPublishNotifications,
-  regenerateAccessCode,
-  getExamSubjects, addExamSubject, updateExamSubject, deleteExamSubject, reorderExamSubjects,
-  getQuestions, addQuestion, updateQuestion, deleteQuestion, bulkUploadQuestions,
-  downloadQuestionTemplate, forceSubmitStudent, getExamResults,
-  exportResultsExcel, exportResultsCSV, exportResultsPDF,
-  upload,
+  getExams,
+  getExamById,
+  createExam,
+  updateExam,
+  deleteExam,
+  publishExam,
+  cancelExam,
+  duplicateExam,
+  getQuestionsByExamId,
+  addQuestionToExam,
+  updateQuestion,
+  deleteQuestion,
+  importQuestionsExcel,
+  downloadQuestionTemplate,
+  downloadExamAuditReportPDF,
+  exportExamPerformanceExcel,
+  retryFailedPublishNotifications,
+  regenerateAccessCode
 };
