@@ -523,10 +523,7 @@ const sendReminderEmail = async (student, exam, type) => {
   }
 
   try {
-    const transporter = createTransporter(user, pass, { host, port, secure });
-    await transporter.verify();
-    await transporter.sendMail({
-      from: `"SBIT Examinations" <${user}>`,
+    await sendWithBrevo({
       to: student.email,
       subject: `SBIT Exam Reminder — Starts in ${typeLabel}: ${exam.title}`,
       html: getReminderEmailHTML(student, exam, type, portalUrl),
@@ -746,6 +743,7 @@ const sendOtpEmail = async (email, name, otp) => {
 };
 
 module.exports = {
+  sendWithBrevo,
   sendWelcomeEmail,
   sendReminderEmail,
   isEmailConfigured,
