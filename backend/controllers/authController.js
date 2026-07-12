@@ -49,7 +49,7 @@ const adminLogin = async (req, res) => {
     const isMatch = await admin.comparePassword(password);
     if (!isMatch) {
       console.warn(`🔑 [Admin Login Failed] Incorrect password entered for Admin identifier "${email}".`);
-      
+
       admin.loginAttempts = (admin.loginAttempts || 0) + 1;
       if (admin.loginAttempts >= 5) {
         admin.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
@@ -139,8 +139,15 @@ const studentLogin = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Student ID and password are required' });
     }
 
-    // Search strictly by studentId (case-insensitive conversion to uppercase)
-    const student = await Student.findOne({ studentId: String(studentId).toUpperCase() }).populate('department', 'name code');
+    // Allow login using either Student ID or Roll Number
+    const loginId = String(studentId).trim().toUpperCase();
+
+    const student = await Student.findOne({
+      $or: [
+        { studentId: loginId },
+        { rollNumber: loginId }
+      ]
+    }).populate('department', 'name code');
 
     if (!student) {
       console.warn(`🔑 [Student Login Failed] Student ID "${studentId}" not found.`);
@@ -164,7 +171,7 @@ const studentLogin = async (req, res) => {
     const isMatch = await student.comparePassword(password);
     if (!isMatch) {
       console.warn(`🔑 [Student Login Failed] Incorrect password entered for Student ID "${studentId}".`);
-      
+
       student.loginAttempts = (student.loginAttempts || 0) + 1;
       if (student.loginAttempts >= 5) {
         student.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
