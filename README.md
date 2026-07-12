@@ -1,290 +1,242 @@
-﻿# 🎓 SBIT Online Examination System
+# SBIT Online Examination System
 
-A full-stack, production-ready online examination platform built for **Swarna Bharathi Institute of Science and Technology (SBIT)**. Supports automated student registration via Google Forms, secure proctored exams with violation tracking, real-time admin dashboards, and automated credential delivery via email.
+A full-stack online examination platform developed for **Swarna Bharathi Institute of Science and Technology**.
 
----
+The system helps faculty create and manage examinations, assign exams to selected student groups, monitor ongoing exams, automate notifications, and manage results from a centralized admin panel. Students can securely attend exams through a dedicated portal with automatic answer saving and anti-cheating controls.
 
-## ✨ Features
+## Project Overview
 
-### 👨‍🎓 Student Portal
-- **Secure Login** — Student ID + password only (no roll number login)
-- **Exam Dashboard** — View upcoming, active, and completed exams filtered by department, year, semester, and section
-- **Proctored Exams** — Tab-switch & fullscreen violation detection with configurable max violations
-- **Auto-Submit** — Exam auto-submits on time expiry or max violations reached
-- **Result Viewing** — View scores, grade, pass/fail status, and download PDF result
-- **Randomization** — Questions and options can be randomized per exam
+The SBIT Online Examination System was developed to simplify the examination process for both faculty and students.
 
-### 🛠️ Admin Panel
-- **Dashboard** — Live analytics: total students, active exams, email stats, pass rates, charts
-- **Exam Manager** — Create/edit exams with department, year, semester, and section targeting
-- **Question Manager** — Add questions manually or bulk upload via Excel (.xlsx)
-- **Student Manager** — View/search students, reset credentials, activate/deactivate accounts, export to Excel
-- **Google Form Sync** — Manual and automatic (every 5 min) sync of student registrations from Google Sheets
-- **Result Manager** — View all exam results, force-submit active students, export results as Excel/CSV/PDF
-- **Department & Subject Manager** — Full CRUD for departments and subjects
-- **Email Logs** — Track welcome email delivery status per student
-- **System Settings** — Configure Gmail SMTP, Google Sheets API credentials, and exam portal URL via UI
+The platform provides separate interfaces for administrators and students. Administrators can manage students, subjects, departments, examinations, questions, notifications, and results. Students can view assigned exams, enter an access code, attend exams, and view their results.
 
-### 🔐 Super Admin
-- Create/manage admins with role-based access (Admin vs. Super Admin)
-- Reset admin passwords, view activity logs
-- Full access to all settings
+## Main Features
 
----
+### Student Portal
 
-## 🛠️ Technology Stack
+- Login using Student ID or Roll Number
+- Secure password authentication
+- View upcoming, active, and completed exams
+- Access-code verification before starting an exam
+- Timed examinations
+- Automatic answer saving
+- Mark questions for review
+- Resume an interrupted exam
+- View results after publication
+- Download examination results
 
-| Layer | Technology |
-|---|---|
-| **Frontend** | React 19, Vite 8, Tailwind CSS 4, React Router 7 |
-| **Backend** | Node.js, Express 4, MongoDB Atlas, Mongoose 8 |
-| **Authentication** | JWT (JSON Web Tokens), bcryptjs |
-| **Email** | Nodemailer (Gmail SMTP + App Password) |
-| **Google Integration** | Google Sheets API v4, Service Account |
-| **File Processing** | ExcelJS (Excel export), PDFKit (PDF results), Multer (uploads) |
-| **Security** | Helmet, express-rate-limit, CORS |
-| **Scheduling** | node-cron (automatic Google Form sync every 5 minutes) |
+### Admin Portal
 
----
+- Dashboard with examination statistics
+- Create, edit, publish, and manage exams
+- Assign exams by department, year, semester, and section
+- Add questions manually
+- Import questions using Excel files
+- Manage departments and subjects
+- Manage student accounts
+- Search and filter student records
+- Activate or deactivate student accounts
+- Monitor ongoing examinations
+- View and export examination results
+- Manage email notifications and delivery logs
+- Configure examination settings
 
-## 📁 Project Structure
+### Examination Security
+
+The examination interface includes several controls to support fair examination practices:
+
+- Question-order randomization
+- Answer-option randomization
+- Fullscreen monitoring
+- Browser tab-switch detection
+- Window focus-loss detection
+- Copy, cut, and paste blocking
+- Right-click blocking
+- Text-selection blocking
+- Restricted browser and developer-tool shortcuts
+- Multiple exam-tab detection
+- Configurable violation limits
+- Automatic submission after the maximum violation limit
+- Detailed violation history with timestamps
+- Automatic submission when examination time expires
+
+## Additional Features
+
+- Student registration synchronization through Google Forms and Google Sheets
+- Automated student credential emails
+- Examination publication notifications
+- Examination reminder emails
+- Email delivery logs and retry support
+- Single-subject and multi-subject examinations
+- Section-wise student assignment
+- Result analytics and report exports
+- Role-based administration
+
+## Technology Stack
+
+| Layer | Technologies |
+| --- | --- |
+| Frontend | React, Vite, Tailwind CSS |
+| Backend | Node.js, Express.js |
+| Database | MongoDB Atlas, Mongoose |
+| Authentication | JWT, bcryptjs |
+| Email | Brevo SMTP, Nodemailer |
+| Integrations | Google Sheets API |
+| Charts | Chart.js |
+| Deployment | Vercel (frontend), Render (backend) |
+
+## Project Structure
 
 ```
-sbit-online-examination-system/
-├── backend/                    # Express API server
-│   ├── controllers/            # Route handlers
-│   ├── jobs/                   # Cron jobs (Google Form sync, email reminders)
-│   ├── middleware/             # JWT auth middleware
-│   ├── models/                 # Mongoose schemas
-│   ├── routes/                 # Express routes
-│   ├── utils/                  # Helpers (email, Google Sheets, ID generation)
-│   ├── seed-admin.js           # DB reset & Super Admin seed script
-│   ├── verify-system.js        # Pre-flight system verification script
-│   ├── server.js               # App entry point
-│   └── .env.example            # Environment variable template
-├── frontend/                   # React + Vite SPA
+sbist-online-examination-system/
+├── backend/
+│   ├── controllers/
+│   ├── jobs/
+│   ├── middleware/
+│   ├── models/
+│   ├── routes/
+│   ├── utils/
+│   └── server.js
+│
+├── frontend/
 │   ├── src/
-│   │   ├── components/         # Shared UI components
+│   │   ├── components/
 │   │   ├── pages/
-│   │   │   ├── admin/          # Admin pages
-│   │   │   ├── auth/           # Login page
-│   │   │   └── student/        # Student exam pages
-│   │   └── utils/              # API client, helpers
-│   └── .env.example            # Frontend environment template
-├── package.json                # Root scripts (run both servers concurrently)
+│   │   │   ├── admin/
+│   │   │   ├── auth/
+│   │   │   └── student/
+│   │   └── utils/
+│   └── public/
+│
+├── package.json
 └── README.md
 ```
 
----
-
-## 🚀 Installation & Setup
+## Local Setup
 
 ### Prerequisites
-- Node.js ≥ 18
-- MongoDB Atlas account
-- Gmail account with App Password enabled
-- Google Cloud project with Sheets API enabled + Service Account
 
-### 1. Clone the Repository
+Install the following before running the project:
+
+- Node.js 18 or later
+- npm
+- MongoDB Atlas account
+
+### 1. Clone the repository
 
 ```bash
-git clone https://github.com/your-username/sbit-online-examination-system.git
-cd sbit-online-examination-system
+git clone https://github.com/VishnuRali/sbist-online-examination-system.git
+cd sbist-online-examination-system
 ```
 
-### 2. Configure Backend
+### 2. Install backend dependencies
 
 ```bash
 cd backend
-cp .env.example .env
+npm install
 ```
 
-Edit `backend/.env` with your values:
+Create a `.env` file inside the `backend` folder and configure the required environment variables.
 
-```env
-MONGODB_URI=mongodb+srv://<user>:<pass>@cluster0.xxxxx.mongodb.net/sbit_exam
-JWT_SECRET=your_strong_random_secret
-SUPER_ADMIN_EMAIL=admin@yourdomain.edu
-SUPER_ADMIN_PASSWORD=YourSecurePassword123!
-SUPER_ADMIN_EMPLOYEE_ID=SUPERADMIN
-GMAIL_USER=notifications@yourdomain.com
-GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
-GOOGLE_SHEET_ID=your_sheet_id
-GOOGLE_SERVICE_ACCOUNT_EMAIL=service@project.iam.gserviceaccount.com
-GOOGLE_PRIVATE_KEY="-----BEGIN RSA PRIVATE KEY-----\n...\n-----END RSA PRIVATE KEY-----\n"
-```
-
-### 3. Configure Frontend
+### 3. Install frontend dependencies
 
 ```bash
-cd frontend
-cp .env.example .env
+cd ../frontend
+npm install
 ```
 
-Edit `frontend/.env`:
+Create a `.env` file inside the `frontend` folder:
 
-```env
+```
 VITE_API_URL=http://localhost:5000/api
 ```
 
-### 4. Install Dependencies
+### 4. Run the application
 
-```bash
-# From the project root
-cd backend && npm install
-cd ../frontend && npm install
-```
-
-### 5. Seed the Database
+Start the backend:
 
 ```bash
 cd backend
-node seed-admin.js
-```
-
-This will:
-- Wipe all existing data
-- Seed 7 departments (CSE, CSE AI&ML, CSE DS, ECE, EEE, MECH, CIVIL)
-- Create the Super Admin with your `.env` credentials
-- Verify bcrypt hash matches before exiting
-
-### 6. Verify System
-
-```bash
-node verify-system.js
-```
-
-### 7. Start the Application
-
-```bash
-# From the project root — runs both servers concurrently
 npm run dev
-
-# Or start separately:
-npm run backend   # Express API on port 5000
-npm run frontend  # Vite dev server on port 5173
 ```
 
----
-
-## ⚙️ Configuration
-
-### Google Form Setup
-
-Create a Google Form titled **"SBIT Online Examination Registration"** with these fields in order:
-
-| Column | Field | Type |
-|--------|-------|------|
-| B | Student Name | Short Answer |
-| C | Email Address | Email |
-| D | Roll Number | Short Answer |
-| E | Phone Number | Short Answer |
-| F | Department | Dropdown (CSE / CSE (AI & ML) / CSE (DS) / ECE / EEE / MECH / CIVIL) |
-| G | Year | Dropdown (1 / 2 / 3 / 4) |
-| H | Semester | Dropdown (1 / 2) |
-| I | Section | Dropdown (A / B / C) |
-| J | Academic Year | Short Answer (e.g. 2025-26) |
-| K | Sync Status | *(Written by the app — leave empty)* |
-
-Link the form to a Google Spreadsheet. Share the spreadsheet with your Service Account email (with Editor access).
-
-### Gmail App Password
-
-1. Enable 2-Factor Authentication on your Gmail account
-2. Go to **Google Account → Security → App Passwords**
-3. Generate a 16-character app password
-4. Add it to `GMAIL_APP_PASSWORD` in `backend/.env`
-
----
-
-## 📸 Screenshots
-
-> *(Add screenshots of your deployed system here)*
-
-| Admin Dashboard | Exam Manager | Student Exam |
-|---|---|---|
-| ![Dashboard](screenshots/dashboard.png) | ![Exams](screenshots/exams.png) | ![Student](screenshots/student.png) |
-
----
-
-## 🚢 Deployment Guide
-
-### Backend — Deploy to Railway / Render / VPS
-
-1. Push backend to a platform (Railway, Render, etc.)
-2. Add all environment variables from `.env.example`
-3. Set `NODE_ENV=production`
-4. Set `FRONTEND_URL` to your production frontend URL
-5. MongoDB Atlas: whitelist the deployment server's IP (or use `0.0.0.0/0`)
-
-### Frontend — Deploy to Vercel / Netlify
-
-1. Set `VITE_API_URL` to your production backend URL (e.g. `https://api.yourdomain.com/api`)
-2. Deploy the `frontend/` directory
-
-### After Deployment
+Open another terminal and start the frontend:
 
 ```bash
-# Run seed script once on your production server:
-node seed-admin.js
+cd frontend
+npm run dev
 ```
 
----
+The frontend will normally run at `http://localhost:5173`.
 
-## 🔒 Security Notes
+## Environment Variables
 
-- `.env` files are **never committed** to version control
-- All passwords are bcrypt-hashed (cost factor 12)
-- JWT tokens expire after 24 hours
-- Admin routes are protected by role-based middleware
-- Rate limiting is applied to all API routes
-- Helmet.js sets secure HTTP headers
-- Student login is restricted to Student ID only (no roll number bypass)
+Sensitive credentials must be stored in environment variables and must not be committed to GitHub.
 
----
+Important backend configuration includes:
 
-## 📋 Available Scripts
+```
+MONGODB_URI=
+JWT_SECRET=
+FRONTEND_URL=
+BREVO_SMTP_USER=
+BREVO_SMTP_KEY=
+GOOGLE_SHEET_ID=
+GOOGLE_SERVICE_ACCOUNT_EMAIL=
+GOOGLE_PRIVATE_KEY=
+```
 
-### Root
-| Command | Description |
-|---|---|
-| `npm run dev` | Start both backend and frontend concurrently |
-| `npm run backend` | Start backend only |
-| `npm run frontend` | Start frontend only |
+Use the environment example files in the project as a reference for the complete configuration.
 
-### Backend
-| Command | Description |
-|---|---|
-| `npm run dev` | Start with nodemon (auto-reload) |
-| `npm start` | Start production server |
-| `node seed-admin.js` | Reset DB and create Super Admin |
-| `node verify-system.js` | Verify all system checks |
+## Deployment
 
-### Frontend
-| Command | Description |
-|---|---|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | Build for production |
-| `npm run preview` | Preview production build |
+**Backend — Render**
+1. Create a new Web Service on Render and connect it to this repository, root directory `backend`
+2. Add all environment variables listed above in the Render dashboard
+3. Set the build command to `npm install` and the start command to `npm start`
+4. In MongoDB Atlas, whitelist Render's outbound IPs (or allow `0.0.0.0/0`)
 
-## 🚀 Features Implemented (Prompts 1-10)
+**Frontend — Vercel**
+1. Import the repository into Vercel, set the root directory to `frontend`
+2. Add `VITE_API_URL` pointing to your live Render backend URL (e.g. `https://your-app.onrender.com/api`)
+3. Deploy — Vercel auto-builds on every push to `main`
 
-A suite of production-ready features has been added under this update:
-1. **Multi-Subject Exams** — Added support for Single and Multi-Subject Exams. Timers and transitions work seamlessly between subjects in sequence.
-2. **Visual Option Mapping (Evaluation Bug Fix)** — Resolved option randomization grading issues by storing and tracking visual choices back to correct database answers during submission.
-3. **Email Logs Search & Filters** — Debounced search inputs by Name, Student ID, or Email instantly querying filtered databases on the backend.
-4. **SMTP Failure & Queue System** — User-friendly message parsing, auto-retries with exponential backoffs (1m, 5m, 15m), manual single & retry-all options.
-5. **Section-wise Notifications** — Filtering by Department, Year, Semester, and Section. Displays dynamic preview of estimated recipients count. Individual student search by Name, ID, or Roll Number.
+After deploying, update `FRONTEND_URL` on Render to your Vercel domain so CORS and email links resolve correctly.
 
----
+## Current Status
 
-## 📄 License
+The major student, administrator, examination, monitoring, notification, and result-management modules are implemented.
 
-This project is proprietary software developed for **Swarna Bharathi Institute of Science and Technology**.  
-All rights reserved © 2025 SBIT.
+The system is currently undergoing final testing and reliability improvements before institutional deployment.
 
----
+Planned improvements include:
 
-## 👨‍💻 Developed By
+- Student identity watermark during examinations
+- Improved offline and reconnection handling
+- Enhanced online/offline monitoring
+- Additional examination security reports
+- Performance and concurrent-user testing
 
-Built with ❤️ for the SBIT Examination Department.
+## Security
+
+- Passwords are securely hashed before storage
+- Authentication is handled using JSON Web Tokens
+- Protected routes use role-based authorization
+- Student sessions are validated by the backend
+- API rate limiting and secure HTTP headers are enabled
+- Examination violations are recorded with timestamps
+- Sensitive credentials are stored outside the source code
+
+## Developer
+
+**Rali Vishnu Vardhan**
+B.Tech — Computer Science and Engineering
+Swarna Bharathi Institute of Science and Technology
+
+GitHub: [VishnuRali](https://github.com/VishnuRali)
+
+## License
+
+This project was developed for academic and institutional use at Swarna Bharathi Institute of Science and Technology.
+
+All rights reserved.
