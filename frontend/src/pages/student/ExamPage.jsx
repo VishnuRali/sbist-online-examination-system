@@ -124,7 +124,7 @@ export default function ExamPage() {
 
   const applyStartResponse = useCallback((data) => {
     const { exam, questions: qs, result, remainingSeconds,
-            currentSubjectIndex: csi, totalSubjects: ts, currentSubject } = data
+      currentSubjectIndex: csi, totalSubjects: ts, currentSubject } = data
     setExamData(exam)
     setQuestions(qs)
     setResultId(result._id)
@@ -169,7 +169,7 @@ export default function ExamPage() {
           navigate('/student/results', { replace: true })
         } else if (lower.includes('access code')) {
           if (document.fullscreenElement) {
-            document.exitFullscreen().catch(() => {})
+            document.exitFullscreen().catch(() => { })
           }
           setNeedsAccessCode(true)
           setAccessCodeError(errorMsg)
@@ -186,13 +186,13 @@ export default function ExamPage() {
 
     // Attempt fullscreen
     if (document.documentElement.requestFullscreen) {
-      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+      document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { })
     }
 
     return () => {
       clearInterval(autoSaveRef.current)
       clearInterval(timerRef.current)
-      if (document.fullscreenElement) document.exitFullscreen().catch(() => {})
+      if (document.fullscreenElement) document.exitFullscreen().catch(() => { })
     }
   }, [examId])
 
@@ -241,6 +241,7 @@ export default function ExamPage() {
     }
     const preventContextMenu = (e) => e.preventDefault()
     const preventCopy = (e) => e.preventDefault()
+    const preventTextSelection = (e) => e.preventDefault()
     const preventKeyboard = (e) => {
       // Block common cheat shortcuts
       if (
@@ -260,7 +261,9 @@ export default function ExamPage() {
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     document.addEventListener('contextmenu', preventContextMenu)
     document.addEventListener('copy', preventCopy)
+    document.addEventListener('paste', preventCopy)
     document.addEventListener('cut', preventCopy)
+    document.addEventListener('selectstart', preventTextSelection)
     document.addEventListener('keydown', preventKeyboard)
 
     return () => {
@@ -269,7 +272,9 @@ export default function ExamPage() {
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
       document.removeEventListener('contextmenu', preventContextMenu)
       document.removeEventListener('copy', preventCopy)
+      document.removeEventListener('paste', preventCopy)
       document.removeEventListener('cut', preventCopy)
+      document.removeEventListener('selectstart', preventTextSelection)
       document.removeEventListener('keydown', preventKeyboard)
     }
   }, [submitted, resultId])
@@ -293,7 +298,7 @@ export default function ExamPage() {
         toast.error('Maximum violations reached. Exam auto-submitted.')
         handleAutoSubmit()
       }
-    } catch {}
+    } catch { }
   }, [violations, resultId])
 
 
@@ -309,7 +314,7 @@ export default function ExamPage() {
         currentSubjectIndex,
       })
       if (showToast) toast.success('Progress saved', { duration: 1500 })
-    } catch {}
+    } catch { }
   }, [resultId, answers, currentIdx, reviewList, currentSubjectIndex])
 
   // ── Switch subject (multi-subject free navigation) ─────────
@@ -363,13 +368,13 @@ export default function ExamPage() {
       await saveProgress(false)
       const res = await api.post('/student/exams/submit', { resultId, answers, reviewList })
       setSubmitResult(res.data.result)
-      
+
       // Mark submitted via ref BEFORE exiting fullscreen
       submittedRef.current = true
       setSubmitted(true)
-      
+
       if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {})
+        document.exitFullscreen().catch(() => { })
       }
 
       if (res.data.alreadySubmitted) {
@@ -394,17 +399,17 @@ export default function ExamPage() {
     try {
       clearInterval(autoSaveRef.current)
       clearInterval(timerRef.current)
-      
+
       const res = await api.post('/student/exams/submit', { resultId, answers, reviewList })
       setSubmitResult(res.data.result)
       setSubmitted(true)
-      
+
       if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => {})
+        document.exitFullscreen().catch(() => { })
       }
       toast.success('Exam submitted successfully.', { id: 'exam-submit-status' })
-    } catch {}
-    
+    } catch { }
+
     setTimeout(() => {
       navigate('/student/results', { replace: true })
     }, 1500)
@@ -550,11 +555,10 @@ export default function ExamPage() {
         </div>
 
         {/* Timer */}
-        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-base font-mono tabular-nums ${
-          timerDanger ? 'bg-red-500/20 border border-red-500/40 text-red-400 timer-danger' :
+        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-base font-mono tabular-nums ${timerDanger ? 'bg-red-500/20 border border-red-500/40 text-red-400 timer-danger' :
           timerWarning ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' :
-          'bg-slate-800 border border-slate-700 text-slate-200'
-        }`}>
+            'bg-slate-800 border border-slate-700 text-slate-200'
+          }`}>
           <Clock size={16} className={timerDanger ? 'text-red-400' : timerWarning ? 'text-amber-400' : 'text-slate-400'} />
           {formatTime(timeLeft)}
         </div>
@@ -574,7 +578,7 @@ export default function ExamPage() {
               if (document.fullscreenElement) {
                 document.exitFullscreen().then(() => setIsFullscreen(false))
               } else {
-                document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => {})
+                document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { })
               }
             }}
             className="btn-icon text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
@@ -616,13 +620,12 @@ export default function ExamPage() {
                     type="button"
                     onClick={() => handleSwitchSubject(i)}
                     disabled={subjectTransitioning || isActive}
-                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${
-                      isActive
-                        ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 cursor-default'
-                        : isVisited
+                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${isActive
+                      ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 cursor-default'
+                      : isVisited
                         ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer'
                         : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-200 cursor-pointer'
-                    } disabled:opacity-60`}
+                      } disabled:opacity-60`}
                     title={isActive ? 'Current subject' : `Switch to ${examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}`}
                   >
                     {isVisited && !isActive ? '✓ ' : ''}
@@ -669,17 +672,15 @@ export default function ExamPage() {
                   <button
                     key={opt}
                     onClick={() => selectAnswer(opt)}
-                    className={`w-full text-left flex items-center gap-4 p-4 rounded-xl border-2 transition-all duration-150 active:scale-[0.995] ${
-                      selectedOption === opt
-                        ? 'border-blue-500 bg-blue-600/15 text-slate-100'
-                        : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-700/40'
-                    }`}
+                    className={`w-full text-left flex items-center gap-4 p-4 rounded-xl border-2 transition-all duration-150 active:scale-[0.995] ${selectedOption === opt
+                      ? 'border-blue-500 bg-blue-600/15 text-slate-100'
+                      : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-700/40'
+                      }`}
                   >
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm flex-shrink-0 transition-all ${
-                      selectedOption === opt
-                        ? 'bg-blue-600 text-white'
-                        : 'bg-slate-700 text-slate-400'
-                    }`}>
+                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm flex-shrink-0 transition-all ${selectedOption === opt
+                      ? 'bg-blue-600 text-white'
+                      : 'bg-slate-700 text-slate-400'
+                      }`}>
                       {opt}
                     </div>
                     <span className="leading-snug">{currentQ.options[opt]}</span>
@@ -701,9 +702,8 @@ export default function ExamPage() {
                 )}
                 <button
                   onClick={toggleReview}
-                  className={`btn-sm flex items-center gap-1.5 text-xs ${
-                    isMarked ? 'btn-warning' : 'btn-secondary'
-                  }`}
+                  className={`btn-sm flex items-center gap-1.5 text-xs ${isMarked ? 'btn-warning' : 'btn-secondary'
+                    }`}
                 >
                   <Flag size={13} />
                   {isMarked ? 'Unmark Review' : 'Mark for Review'}
@@ -850,7 +850,7 @@ export default function ExamPage() {
               onClick={() => {
                 setShowViolationWarning(false)
                 if (!document.fullscreenElement) {
-                  document.documentElement.requestFullscreen().catch(() => {})
+                  document.documentElement.requestFullscreen().catch(() => { })
                 }
               }}
               className="btn-primary w-full"
