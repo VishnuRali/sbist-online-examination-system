@@ -20,7 +20,7 @@ export default function StudentDashboard() {
   useEffect(() => {
     api.get('/student/exams')
       .then(res => setExams(res.data.exams))
-      .catch(() => {})
+      .catch(() => { })
       .finally(() => setLoading(false))
   }, [])
 
@@ -59,13 +59,19 @@ export default function StudentDashboard() {
 
   const handleAction = (exam) => {
     const state = getExamState(exam)
-    if (exam.isCompleted) return navigate('/student/results')
-    if (!state.canStart) return
-    // Resume skips access code; first start requires it
-    if (exam.isInProgress) return navigate(`/student/exam/${exam._id}`)
-    if (exam.accessCode) {
-      return navigate(`/student/exam/${exam._id}`, { state: { accessCode: exam.accessCode } })
+
+    if (exam.isCompleted) {
+      return navigate('/student/results')
     }
+
+    if (!state.canStart) return
+
+    // Resume an already-started exam without asking again
+    if (exam.isInProgress) {
+      return navigate(`/student/exam/${exam._id}`)
+    }
+
+    // First start: always ask the student to enter the access code
     openAccessModal(exam)
   }
 
