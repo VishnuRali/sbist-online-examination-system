@@ -118,6 +118,8 @@ export default function ExamPage() {
   const autoSaveRef = useRef(null)
   const timerRef = useRef(null)
   const violationLockRef = useRef(false)
+  // Unique ID for this browser tab
+  const examTabIdRef = useRef(crypto.randomUUID())
   // Ref that mirrors submitted state but is updated SYNCHRONOUSLY.
   // Used by event handlers whose closures capture stale state.
   const submittedRef = useRef(false)
@@ -195,6 +197,53 @@ export default function ExamPage() {
       if (document.fullscreenElement) document.exitFullscreen().catch(() => { })
     }
   }, [examId])
+
+  // ── Prevent exam from opening in multiple tabs ──────────────
+  useEffect(() => {
+    if (!resultId || submitted) return
+
+    const channel = new BroadcastChannel(`exam-${resultId}`)
+    const currentTabId = examTabIdRef.current
+
+    channel.postMessage({
+      type: 'CHECK_ACTIVE_EXAM_TAB',
+      tabId: currentTabId,
+    })
+
+    const handleMessage = (event) => {
+      const { type, tabId } = event.data || {}
+
+      if (type === 'CHECK_ACTIVE_EXAM_TAB' && tabId !== currentTabId) {
+        channel.postMessage({
+          type: 'EXAM_TAB_ALREADY_ACTIVE',
+          targetTabId: tabId,
+        })
+      }
+
+      if (
+        type === 'EXAM_TAB_ALREADY_ACTIVE' &&
+        event.data.targetTabId === currentTabId
+      ) {
+        toast.error(
+          'This exam is already open in another tab. Please continue there.',
+          { id: 'duplicate-exam-tab' }
+        )
+
+        setTimeout(() => {
+          navigate('/student/dashboard', { replace: true })
+        }, 1500)
+      }
+    }
+
+    channel.addEventListener('message', handleMessage)
+
+    return () => {
+      channel.removeEventListener('message', handleMessage)
+      channel.close()
+    }
+  }, [resultId, submitted, navigate])
+
+
 
   // ── Timer ─────────────────────────────────────────────────
   useEffect(() => {
