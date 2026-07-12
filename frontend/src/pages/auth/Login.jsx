@@ -85,8 +85,8 @@ export default function Login() {
                     setForm(m === 'admin' ? { ...ADMIN_PREFILL } : { ...STUDENT_PREFILL })
                   }}
                   className={`flex-1 flex items-center justify-center gap-2 py-2.5 rounded-lg text-sm font-semibold transition-all ${mode === m
-                      ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
-                      : 'text-slate-400 hover:text-slate-200'
+                    ? 'bg-gradient-to-r from-blue-600 to-indigo-600 text-white shadow-lg'
+                    : 'text-slate-400 hover:text-slate-200'
                     }`}
                 >
                   {m === 'admin' ? <ShieldCheck size={16} /> : <GraduationCap size={16} />}
@@ -102,20 +102,20 @@ export default function Login() {
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
                 <label className="input-label">
-                  {mode === 'admin' ? 'Email Address' : 'Student ID'}
+                  {mode === 'admin' ? 'Email Address' : 'Student ID / Roll Number'}
                 </label>
                 <input
                   type={mode === 'admin' ? 'email' : 'text'}
                   value={form.identifier}
                   onChange={e => setForm(f => ({ ...f, identifier: e.target.value }))}
-                  placeholder={mode === 'admin' ? 'admin@sbit.edu' : 'e.g. SBIT-CSE-2026-001'}
+                  placeholder={mode === 'admin' ? 'admin@sbit.edu' : 'Enter Student ID or Roll Number'}
                   className="input-field"
                   required
                   autoFocus
                 />
                 {mode === 'student' && (
                   <p className="text-xs text-slate-500 mt-1">
-                    💡 Your Student ID was sent to your email on Google Form registration
+                    💡 Log in using your Student ID or Roll Number
                   </p>
                 )}
               </div>
