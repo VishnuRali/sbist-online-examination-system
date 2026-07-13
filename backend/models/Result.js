@@ -46,6 +46,11 @@ const resultSchema = new mongoose.Schema({
     enum: ['in_progress', 'submitted', 'force_submitted', 'auto_submitted'],
     default: 'in_progress'
   },
+  autoSubmitReason: {
+    type: String,
+    default: '',
+    trim: true
+  },
   startedAt: { type: Date, default: Date.now },
   submittedAt: { type: Date },
   timeSpent: { type: Number, default: 0 }, // seconds

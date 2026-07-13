@@ -940,6 +940,7 @@ const getLiveMonitorData = async (req, res) => {
           classDetails: `Y${student.year}/S${student.semester}/Sec ${student.section || '—'}`,
           status,
           violations: result ? result.violations : 0,
+          autoSubmitReason: result?.autoSubmitReason || '',
           examTitle: exam.title,
           isOnline: student.isLoggedIn
         });

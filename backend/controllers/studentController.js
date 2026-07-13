@@ -589,11 +589,11 @@ const reportViolation = async (req, res) => {
 
 const submitExam = async (req, res) => {
   try {
-    const { resultId, answers, reviewList } = req.body;
+    const { resultId, answers, reviewList, submissionType, autoSubmitReason } = req.body;
 
     const result = await Result.findById(resultId);
     if (!result) return res.status(404).json({ success: false, message: 'Result not found' });
-    
+
     const exam = await Exam.findById(result.exam);
     if (result.status !== 'in_progress') {
       return res.json({
@@ -641,13 +641,30 @@ const submitExam = async (req, res) => {
     };
     result.markModified('savedProgress');
 
-    return submitExamLogic(result, exam, res, 'submitted');
+    const submitStatus =
+      submissionType === 'auto_submitted'
+        ? 'auto_submitted'
+        : 'submitted';
+
+    return submitExamLogic(
+      result,
+      exam,
+      res,
+      submitStatus,
+      autoSubmitReason
+    );
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
 };
 
-const submitExamLogic = async (result, exam, res, submitStatus) => {
+const submitExamLogic = async (
+  result,
+  exam,
+  res,
+  submitStatus,
+  autoSubmitReason = ''
+) => {
   try {
     const dbResult = await Result.findById(result._id);
     if (!dbResult) {
@@ -679,6 +696,7 @@ const submitExamLogic = async (result, exam, res, submitStatus) => {
     const evaluation = evaluateExamResult(questions, dbResult.savedProgress?.answers, dbResult.savedProgress?.optionMappings, exam);
 
     dbResult.status = submitStatus;
+    dbResult.autoSubmitReason = submitStatus === 'auto_submitted' ? autoSubmitReason : '';
     dbResult.submittedAt = new Date();
     dbResult.obtainedMarks = evaluation.obtainedMarks;
     dbResult.totalMarks = evaluation.totalMarks;

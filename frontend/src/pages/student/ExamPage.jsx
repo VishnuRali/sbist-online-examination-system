@@ -272,20 +272,43 @@ export default function ExamPage() {
     return () => clearInterval(autoSaveRef.current)
   }, [resultId, answers, reviewList, currentIdx, submitted])
 
+  const handleAutoSubmit = async (reason = 'Prohibited exam activity detected') => {
+    if (submittedRef.current || submitting || submitted) return
+    setSubmitting(true)
+    submittedRef.current = true
+    try {
+      clearInterval(autoSaveRef.current)
+      clearInterval(timerRef.current)
+
+      const res = await api.post('/student/exams/submit', { resultId, answers, reviewList, submissionType: 'auto_submitted', autoSubmitReason: reason })
+      setSubmitResult(res.data.result)
+      setSubmitted(true)
+
+      if (document.fullscreenElement) {
+        document.exitFullscreen().catch(() => { })
+      }
+      toast.success('Exam submitted successfully.', { id: 'exam-submit-status' })
+    } catch { }
+
+    setTimeout(() => {
+      navigate('/student/results', { replace: true })
+    }, 1500)
+  }
+
   // ── Anti-cheat: visibility/blur ───────────────────────────
   useEffect(() => {
     // Remove all anti-cheat listeners once exam is submitted.
     if (submitted) return
 
     const handleVisibilityChange = () => {
-      if (document.hidden) triggerViolation('Tab switching detected')
+      if (document.hidden && !submittedRef.current) {
+        handleAutoSubmit('Tab switching detected')
+      }
     }
-    const handleBlur = () => triggerViolation('Window lost focus')
+
     const handleFullscreenChange = () => {
-      // Guard with the ref so that exitFullscreen() called inside handleSubmit
-      // does not re-trigger a violation after the exam is done.
       if (!document.fullscreenElement && !submittedRef.current) {
-        triggerViolation('Exited fullscreen')
+        handleAutoSubmit('Exited fullscreen')
       }
     }
     const preventContextMenu = (e) => e.preventDefault()
@@ -294,19 +317,18 @@ export default function ExamPage() {
     const preventKeyboard = (e) => {
       // Block common cheat shortcuts
       if (
-        (e.ctrlKey && ['c', 'v', 'a', 'p', 's', 'u'].includes(e.key.toLowerCase())) ||
+        (e.ctrlKey && ['c', 'v', 'a', 'p', 's', 'u', 'n', 't'].includes(e.key.toLowerCase())) ||
         e.key === 'F12' ||
         (e.ctrlKey && e.shiftKey && e.key === 'I') ||
         (e.ctrlKey && e.shiftKey && e.key === 'J') ||
         e.altKey
       ) {
         e.preventDefault()
-        triggerViolation(`Blocked keyboard shortcut: ${e.key}`)
+        handleAutoSubmit(`Blocked keyboard shortcut: ${e.key}`)
       }
     }
 
     document.addEventListener('visibilitychange', handleVisibilityChange)
-    window.addEventListener('blur', handleBlur)
     document.addEventListener('fullscreenchange', handleFullscreenChange)
     document.addEventListener('contextmenu', preventContextMenu)
     document.addEventListener('copy', preventCopy)
@@ -317,7 +339,6 @@ export default function ExamPage() {
 
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange)
-      window.removeEventListener('blur', handleBlur)
       document.removeEventListener('fullscreenchange', handleFullscreenChange)
       document.removeEventListener('contextmenu', preventContextMenu)
       document.removeEventListener('copy', preventCopy)
@@ -441,28 +462,6 @@ export default function ExamPage() {
     }
   }
 
-  const handleAutoSubmit = async () => {
-    if (submittedRef.current || submitting || submitted) return
-    setSubmitting(true)
-    submittedRef.current = true
-    try {
-      clearInterval(autoSaveRef.current)
-      clearInterval(timerRef.current)
-
-      const res = await api.post('/student/exams/submit', { resultId, answers, reviewList })
-      setSubmitResult(res.data.result)
-      setSubmitted(true)
-
-      if (document.fullscreenElement) {
-        document.exitFullscreen().catch(() => { })
-      }
-      toast.success('Exam submitted successfully.', { id: 'exam-submit-status' })
-    } catch { }
-
-    setTimeout(() => {
-      navigate('/student/results', { replace: true })
-    }, 1500)
-  }
 
 
   // ── Navigation ────────────────────────────────────────────

@@ -10,7 +10,7 @@ import {
 export default function LiveExamMonitor() {
   const [exams, setExams] = useState([])
   const [departments, setDepartments] = useState([])
-  
+
   // Filters
   const [filterExam, setFilterExam] = useState('')
   const [filterDept, setFilterDept] = useState('')
@@ -34,7 +34,7 @@ export default function LiveExamMonitor() {
   const [error, setError] = useState(null)
   const [autoRefresh, setAutoRefresh] = useState(true)
   const [lastUpdated, setLastUpdated] = useState(null)
-  
+
   const timerRef = useRef(null)
 
   // Load dropdown choices
@@ -69,7 +69,7 @@ export default function LiveExamMonitor() {
           section: filterSection
         }
       })
-      
+
       const responseData = res.data || {}
       setStats(responseData.stats || {
         totalStudents: 0,
@@ -359,9 +359,20 @@ export default function LiveExamMonitor() {
                       {s.examTitle}
                     </td>
                     <td>
-                      <span className={`badge ${getStatusBadgeClass(s.status)} font-semibold text-[11px]`}>
-                        {s.status}
-                      </span>
+                      <div className="flex flex-col items-start gap-1">
+                        <span className={`badge ${getStatusBadgeClass(s.status)} font-semibold text-[11px]`}>
+                          {s.status}
+                        </span>
+
+                        {s.status === 'Auto Submitted' && s.autoSubmitReason && (
+                          <span
+                            className="text-[10px] text-amber-400 max-w-[180px]"
+                            title={s.autoSubmitReason}
+                          >
+                            Reason: {s.autoSubmitReason}
+                          </span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <span className={`font-bold ${s.violations > 0 ? 'text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20' : 'text-slate-400'}`}>
