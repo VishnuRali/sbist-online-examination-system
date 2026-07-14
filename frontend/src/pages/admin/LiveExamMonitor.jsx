@@ -100,7 +100,7 @@ export default function LiveExamMonitor() {
     if (autoRefresh) {
       timerRef.current = setInterval(() => {
         loadData(false)
-      }, 5000)
+      }, 2000)
     } else {
       if (timerRef.current) clearInterval(timerRef.current)
     }
