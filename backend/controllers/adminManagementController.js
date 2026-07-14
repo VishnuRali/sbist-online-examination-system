@@ -866,50 +866,82 @@ const getLiveMonitorData = async (req, res) => {
     let totalStudents = 0, waiting = 0, writing = 0, submitted = 0, autoSubmitted = 0, absent = 0, disqualified = 0;
     const studentsDetails = [];
 
+    const filteredExams = [];
+    const studentQueries = [];
+    const examIds = [];
+
     for (const exam of exams) {
-      const studentQuery = { isActive: true };
       const examDeptId = exam.department?._id || exam.department;
 
-      if (departmentId) {
-        if (examDeptId && examDeptId.toString() !== departmentId) continue;
-        studentQuery.department = departmentId;
-      } else if (examDeptId) {
-        studentQuery.department = examDeptId;
+      if (departmentId && examDeptId && examDeptId.toString() !== departmentId) continue;
+      if (year && exam.year && String(exam.year).trim() !== String(year).trim()) continue;
+      if (semester && exam.semester && String(exam.semester).trim() !== String(semester).trim()) continue;
+      if (section && exam.section && String(exam.section).trim().toUpperCase() !== String(section).trim().toUpperCase()) continue;
+
+      filteredExams.push(exam);
+      examIds.push(exam._id);
+
+      const singleStudentQuery = {
+        isActive: true,
+        department: departmentId || examDeptId,
+        year: year ? String(year).trim() : (exam.year ? String(exam.year).trim() : undefined),
+        semester: semester ? String(semester).trim() : (exam.semester ? String(exam.semester).trim() : undefined),
+      };
+
+      let examSection = section ? String(section).trim().toUpperCase() : (exam.section && exam.section.trim() !== '' ? exam.section.trim().toUpperCase() : undefined);
+      if (examSection) {
+        singleStudentQuery.section = examSection;
       }
 
-      if (year) {
-        if (exam.year && String(exam.year).trim() !== String(year).trim()) continue;
-        studentQuery.year = String(year).trim();
-      } else if (exam.year) {
-        studentQuery.year = String(exam.year).trim();
-      }
+      // Remove undefined keys
+      Object.keys(singleStudentQuery).forEach(key => {
+        if (singleStudentQuery[key] === undefined) delete singleStudentQuery[key];
+      });
 
-      if (semester) {
-        if (exam.semester && String(exam.semester).trim() !== String(semester).trim()) continue;
-        studentQuery.semester = String(semester).trim();
-      } else if (exam.semester) {
-        studentQuery.semester = String(exam.semester).trim();
-      }
+      studentQueries.push(singleStudentQuery);
+    }
 
-      if (section) {
-        if (exam.section && String(exam.section).trim().toUpperCase() !== String(section).trim().toUpperCase()) continue;
-        studentQuery.section = String(section).trim().toUpperCase();
-      } else if (exam.section && exam.section.trim() !== '') {
-        studentQuery.section = exam.section.trim().toUpperCase();
-      }
+    let students = [];
+    let results = [];
 
-      const students = await Student.find(studentQuery).populate('department', 'name code').select('-password');
-      const results = await Result.find({ exam: exam._id });
+    if (filteredExams.length > 0 && studentQueries.length > 0) {
+      const [allStudents, allResults] = await Promise.all([
+        Student.find({ $or: studentQueries }).populate('department', 'name code').select('-password').lean(),
+        Result.find({ exam: { $in: examIds } })
+          .select('student exam status violations isPassed obtainedMarks totalMarks submittedAt autoSubmitReason')
+          .lean()
+      ]);
+      students = allStudents;
+      results = allResults;
+    }
+
+    for (const exam of filteredExams) {
+      const examDeptId = exam.department?._id || exam.department;
+      const targetDeptId = departmentId || examDeptId;
+      const targetYear = year ? String(year).trim() : (exam.year ? String(exam.year).trim() : null);
+      const targetSem = semester ? String(semester).trim() : (exam.semester ? String(exam.semester).trim() : null);
+      const targetSec = section ? String(section).trim().toUpperCase() : (exam.section && exam.section.trim() !== '' ? exam.section.trim().toUpperCase() : null);
+
+      const examStudents = students.filter(student => {
+        const studentDeptId = student.department?._id || student.department;
+        if (targetDeptId && studentDeptId?.toString() !== targetDeptId.toString()) return false;
+        if (targetYear && String(student.year).trim() !== targetYear) return false;
+        if (targetSem && String(student.semester).trim() !== targetSem) return false;
+        if (targetSec && String(student.section || '').trim().toUpperCase() !== targetSec) return false;
+        return true;
+      });
 
       const resultMap = {};
       results.forEach(r => {
-        resultMap[r.student.toString()] = r;
+        if (r.exam.toString() === exam._id.toString()) {
+          resultMap[r.student.toString()] = r;
+        }
       });
 
       const startTime = new Date(exam.startTime);
       const endTime = new Date(exam.endTime);
 
-      students.forEach(student => {
+      examStudents.forEach(student => {
         const result = resultMap[student._id.toString()];
         let status = 'Not Started';
 

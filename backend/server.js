@@ -92,7 +92,11 @@ const connectDB = async () => {
   checkPasswordEncoding(uri);
 
   try {
-    await mongoose.connect(uri);
+    await mongoose.connect(uri, {
+      maxPoolSize: 100,
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    });
     console.log('✅ MongoDB Atlas connected successfully');
   } catch (error) {
     console.error('❌ MongoDB connection failed!');

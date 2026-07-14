@@ -214,21 +214,22 @@ const startExam = async (req, res) => {
     const { examId } = req.params;
     const now = new Date();
 
-    const exam = await Exam.findById(examId).populate('subject', 'name code');
+    const [exam, existingCompleted, inProgressResult] = await Promise.all([
+      Exam.findById(examId).populate('subject', 'name code'),
+      Result.findOne({ student: student._id, exam: examId, status: { $in: ['submitted', 'force_submitted', 'auto_submitted'] } }),
+      Result.findOne({ student: student._id, exam: examId, status: 'in_progress' })
+    ]);
+
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
     if (exam.status === 'draft') return res.status(403).json({ success: false, message: 'Exam is not published' });
     if (now < new Date(exam.startTime)) return res.status(403).json({ success: false, message: 'Exam has not started yet' });
     if (now > new Date(exam.endTime)) return res.status(403).json({ success: false, message: 'Exam time has ended' });
 
-    const existingCompleted = await Result.findOne({
-      student: student._id, exam: examId,
-      status: { $in: ['submitted', 'force_submitted', 'auto_submitted'] }
-    });
     if (existingCompleted) {
       return res.status(403).json({ success: false, message: 'You have already submitted this exam' });
     }
 
-    let result = await Result.findOne({ student: student._id, exam: examId, status: 'in_progress' });
+    let result = inProgressResult;
 
     // Access code required only on first start (no in-progress Result yet)
     if (!result) {
@@ -258,8 +259,9 @@ const startExam = async (req, res) => {
     );
 
     if (!result) {
-      const totalMarks = (await Question.find({ exam: examId }))
-        .reduce((sum, q) => sum + q.marks, 0);
+      const totalMarks = isMulti
+        ? exam.subjects.reduce((sum, s) => sum + (Number(s.totalMarks) || 0), 0)
+        : questions.reduce((sum, q) => sum + q.marks, 0);
 
       result = new Result({
         student: student._id,
@@ -329,34 +331,41 @@ const saveProgress = async (req, res) => {
   try {
     const { resultId, answers, currentQuestion, reviewList, currentSubjectIndex } = req.body;
 
-    const result = await Result.findById(resultId);
-    if (!result || result.status !== 'in_progress') {
-      return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
+    const setOps = { 'savedProgress.lastSaved': new Date() };
+    const unsetOps = {};
+
+    if (answers && typeof answers === 'object') {
+      Object.entries(answers).forEach(([qId, val]) => {
+        if (val === null || val === '') {
+          unsetOps[`savedProgress.answers.${qId}`] = '';
+        } else {
+          setOps[`savedProgress.answers.${qId}`] = val;
+        }
+      });
     }
 
-    const existingAnswers = mapToObject(result.savedProgress?.answers);
-    const incoming = answers || {};
-    const mergedAnswers = { ...existingAnswers, ...incoming };
-    Object.keys(incoming).forEach((key) => {
-      if (incoming[key] == null || incoming[key] === '') delete mergedAnswers[key];
-    });
+    if (reviewList !== undefined) setOps['savedProgress.reviewList'] = reviewList;
+    if (currentQuestion !== undefined) setOps['savedProgress.currentQuestion'] = currentQuestion;
+    if (currentSubjectIndex !== undefined) setOps['savedProgress.currentSubjectIndex'] = currentSubjectIndex;
 
-    const existingMappings = result.savedProgress?.optionMappings;
-    const existingCompletedSubjects = result.savedProgress?.completedSubjects || [];
+    const update = { $set: setOps };
+    if (Object.keys(unsetOps).length > 0) {
+      update.$unset = unsetOps;
+    }
 
-    result.savedProgress = {
-      answers: mergedAnswers,
-      reviewList: reviewList || result.savedProgress?.reviewList || [],
-      currentQuestion: currentQuestion !== undefined ? currentQuestion : (result.savedProgress?.currentQuestion || 0),
-      currentSubjectIndex: currentSubjectIndex !== undefined
-        ? currentSubjectIndex
-        : (result.savedProgress?.currentSubjectIndex || 0),
-      completedSubjects: existingCompletedSubjects,
-      optionMappings: existingMappings,
-      lastSaved: new Date(),
-    };
-    result.markModified('savedProgress');
-    await result.save();
+    const result = await Result.findOneAndUpdate(
+      { _id: resultId, student: req.student._id, status: 'in_progress' },
+      update,
+      { new: true, projection: { savedProgress: 1, status: 1 } }
+    );
+
+    if (!result) {
+      const exists = await Result.findById(resultId);
+      if (exists && exists.student.toString() !== req.student._id.toString()) {
+        return res.status(403).json({ success: false, message: 'Not authorized for this exam session' });
+      }
+      return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
+    }
 
     res.json({ success: true, message: 'Progress saved', lastSaved: result.savedProgress.lastSaved });
   } catch (error) {
@@ -369,7 +378,10 @@ const switchSubject = async (req, res) => {
     const { resultId, subjectIndex, answers, reviewList, currentQuestion } = req.body;
 
     const result = await Result.findById(resultId);
-    if (!result || result.status !== 'in_progress') {
+    if (!result || result.student.toString() !== req.student._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this exam session' });
+    }
+    if (result.status !== 'in_progress') {
       return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
     }
 
@@ -440,7 +452,10 @@ const submitSubjectAndContinue = async (req, res) => {
     const { resultId, answers, reviewList, subjectIndex } = req.body;
 
     const result = await Result.findById(resultId);
-    if (!result || result.status !== 'in_progress') {
+    if (!result || result.student.toString() !== req.student._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this exam session' });
+    }
+    if (result.status !== 'in_progress') {
       return res.status(400).json({ success: false, message: 'Invalid or completed exam session' });
     }
 
@@ -560,7 +575,10 @@ const reportViolation = async (req, res) => {
     const { resultId, violationType } = req.body;
 
     const result = await Result.findById(resultId);
-    if (!result || result.status !== 'in_progress') {
+    if (!result || result.student.toString() !== req.student._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this exam session' });
+    }
+    if (result.status !== 'in_progress') {
       return res.status(400).json({ success: false, message: 'Invalid session' });
     }
 
@@ -592,7 +610,9 @@ const submitExam = async (req, res) => {
     const { resultId, answers, reviewList, submissionType, autoSubmitReason } = req.body;
 
     const result = await Result.findById(resultId);
-    if (!result) return res.status(404).json({ success: false, message: 'Result not found' });
+    if (!result || result.student.toString() !== req.student._id.toString()) {
+      return res.status(403).json({ success: false, message: 'Not authorized for this exam session' });
+    }
 
     const exam = await Exam.findById(result.exam);
     if (result.status !== 'in_progress') {
@@ -693,22 +713,59 @@ const submitExamLogic = async (
     }
 
     const questions = await Question.find({ exam: dbResult.exam });
-    const evaluation = evaluateExamResult(questions, dbResult.savedProgress?.answers, dbResult.savedProgress?.optionMappings, exam);
+    const evaluation = evaluateExamResult(
+      questions,
+      result.savedProgress?.answers || dbResult.savedProgress?.answers,
+      result.savedProgress?.optionMappings || dbResult.savedProgress?.optionMappings,
+      exam
+    );
 
-    dbResult.status = submitStatus;
-    dbResult.autoSubmitReason = submitStatus === 'auto_submitted' ? autoSubmitReason : '';
-    dbResult.submittedAt = new Date();
-    dbResult.obtainedMarks = evaluation.obtainedMarks;
-    dbResult.totalMarks = evaluation.totalMarks;
-    dbResult.correctAnswers = evaluation.correctAnswers;
-    dbResult.wrongAnswers = evaluation.wrongAnswers;
-    dbResult.skippedAnswers = evaluation.skippedAnswers;
-    dbResult.percentage = evaluation.percentage;
-    dbResult.isPassed = evaluation.isPassed;
-    dbResult.grade = evaluation.grade;
-    dbResult.timeSpent = Math.floor((dbResult.submittedAt - dbResult.startedAt) / 1000);
-    dbResult.subjectResults = evaluation.subjectResults;
-    await dbResult.save();
+    const submittedAtDate = new Date();
+    const updated = await Result.findOneAndUpdate(
+      { _id: dbResult._id, status: 'in_progress' },
+      {
+        $set: {
+          status: submitStatus,
+          submittedAt: submittedAtDate,
+          obtainedMarks: evaluation.obtainedMarks,
+          totalMarks: evaluation.totalMarks,
+          correctAnswers: evaluation.correctAnswers,
+          wrongAnswers: evaluation.wrongAnswers,
+          skippedAnswers: evaluation.skippedAnswers,
+          percentage: evaluation.percentage,
+          isPassed: evaluation.isPassed,
+          grade: evaluation.grade,
+          timeSpent: Math.max(0, Math.floor((submittedAtDate - dbResult.startedAt) / 1000)),
+          subjectResults: evaluation.subjectResults,
+          savedProgress: result.savedProgress || dbResult.savedProgress,
+          autoSubmitReason: submitStatus === 'auto_submitted' ? autoSubmitReason : '',
+        }
+      },
+      { new: true }
+    );
+
+    if (!updated) {
+      const existing = await Result.findById(dbResult._id);
+      return res.json({
+        success: true,
+        alreadySubmitted: true,
+        message: 'Exam already submitted',
+        result: {
+          _id: existing._id,
+          obtainedMarks: existing.obtainedMarks,
+          totalMarks: existing.totalMarks,
+          percentage: (existing.percentage || 0).toFixed(2),
+          grade: existing.grade,
+          isPassed: existing.isPassed,
+          correctAnswers: existing.correctAnswers,
+          wrongAnswers: existing.wrongAnswers,
+          skippedAnswers: existing.skippedAnswers,
+          status: existing.status,
+          subjectResults: existing.subjectResults,
+        },
+        showResult: exam?.showResultAfterExam,
+      });
+    }
 
     await Student.findByIdAndUpdate(dbResult.student, { currentExam: null });
 
@@ -716,12 +773,12 @@ const submitExamLogic = async (
       success: true,
       message: 'Exam submitted successfully',
       result: {
-        _id: dbResult._id,
+        _id: updated._id,
         obtainedMarks: evaluation.obtainedMarks,
         totalMarks: evaluation.totalMarks,
         percentage: evaluation.percentage.toFixed(2),
-        grade: dbResult.grade,
-        isPassed: dbResult.isPassed,
+        grade: updated.grade,
+        isPassed: updated.isPassed,
         correctAnswers: evaluation.correctAnswers,
         wrongAnswers: evaluation.wrongAnswers,
         skippedAnswers: evaluation.skippedAnswers,

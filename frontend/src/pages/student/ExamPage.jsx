@@ -124,6 +124,10 @@ export default function ExamPage() {
   // Used by event handlers whose closures capture stale state.
   const submittedRef = useRef(false)
 
+  const [saveStatus, setSaveStatus] = useState('saved') // 'saved' | 'saving' | 'error'
+  const saveInProgressRef = useRef(false)
+  const lastSavedSnapshotRef = useRef({ answers: {}, reviewList: [], currentIdx: null, currentSubjectIndex: null })
+
   const applyStartResponse = useCallback((data) => {
     const { exam, questions: qs, result, remainingSeconds,
       currentSubjectIndex: csi, totalSubjects: ts, currentSubject } = data
@@ -144,6 +148,13 @@ export default function ExamPage() {
     setCurrentIdx(result.savedProgress?.currentQuestion || 0)
     setNeedsAccessCode(false)
     setAccessCodeError('')
+
+    lastSavedSnapshotRef.current = {
+      answers: typeof saved === 'object' && !(saved instanceof Map) ? { ...saved } : {},
+      reviewList: [...(result.savedProgress?.reviewList || [])],
+      currentIdx: result.savedProgress?.currentQuestion || 0,
+      currentSubjectIndex: csi || 0
+    }
   }, [])
 
   const startExamRequest = useCallback(async (accessCode) => {
@@ -263,14 +274,6 @@ export default function ExamPage() {
     return () => clearInterval(timerRef.current)
   }, [resultId, submitted])
 
-  // ── Auto-save every 5 seconds ─────────────────────────────
-  useEffect(() => {
-    if (!resultId || submitted) return
-    autoSaveRef.current = setInterval(() => {
-      saveProgress(false)
-    }, 5000)
-    return () => clearInterval(autoSaveRef.current)
-  }, [resultId, answers, reviewList, currentIdx, submitted])
 
   const handleAutoSubmit = async (reason = 'Prohibited exam activity detected') => {
     if (submittedRef.current || submitting || submitted) return
@@ -350,6 +353,79 @@ export default function ExamPage() {
   }, [submitted, resultId])
 
 
+  // ── Save progress ─────────────────────────────────────────
+  const saveProgress = useCallback(async (showToast = false) => {
+    if (!resultId || submittedRef.current || submitted) return
+    if (saveInProgressRef.current) return
+
+    const currentSnapshot = {
+      answers,
+      reviewList,
+      currentIdx,
+      currentSubjectIndex,
+    }
+
+    const isDifferent =
+      JSON.stringify(currentSnapshot.answers) !== JSON.stringify(lastSavedSnapshotRef.current.answers) ||
+      JSON.stringify(currentSnapshot.reviewList) !== JSON.stringify(lastSavedSnapshotRef.current.reviewList) ||
+      currentSnapshot.currentIdx !== lastSavedSnapshotRef.current.currentIdx ||
+      currentSnapshot.currentSubjectIndex !== lastSavedSnapshotRef.current.currentSubjectIndex
+
+    if (!showToast && !isDifferent) {
+      return
+    }
+
+    saveInProgressRef.current = true
+    setSaveStatus('saving')
+
+    const doSave = async (isRetry = false) => {
+      try {
+        await api.post('/student/exams/save-progress', {
+          resultId,
+          answers: currentSnapshot.answers,
+          currentQuestion: currentSnapshot.currentIdx,
+          reviewList: currentSnapshot.reviewList,
+          currentSubjectIndex: currentSnapshot.currentSubjectIndex,
+        })
+        lastSavedSnapshotRef.current = {
+          answers: { ...currentSnapshot.answers },
+          reviewList: [...currentSnapshot.reviewList],
+          currentIdx: currentSnapshot.currentIdx,
+          currentSubjectIndex: currentSnapshot.currentSubjectIndex,
+        }
+        setSaveStatus('saved')
+        saveInProgressRef.current = false
+        if (showToast) toast.success('Progress saved', { duration: 1500 })
+      } catch (err) {
+        if (!isRetry) {
+          setTimeout(() => {
+            doSave(true)
+          }, 2000)
+        } else {
+          setSaveStatus('error')
+          saveInProgressRef.current = false
+          console.error('Autosave failed after retry')
+        }
+      }
+    }
+
+    await doSave(false)
+  }, [resultId, answers, currentIdx, reviewList, currentSubjectIndex, submitted])
+
+  const saveProgressRef = useRef(saveProgress)
+  useEffect(() => {
+    saveProgressRef.current = saveProgress
+  }, [saveProgress])
+
+  // ── Auto-save every 5 seconds ─────────────────────────────
+  useEffect(() => {
+    if (!resultId || submitted) return
+    autoSaveRef.current = setInterval(() => {
+      saveProgressRef.current(false)
+    }, 5000)
+    return () => clearInterval(autoSaveRef.current)
+  }, [resultId, submitted])
+
   // ── Violation handler ─────────────────────────────────────
   const triggerViolation = useCallback(async (type) => {
     // Use the ref (not state) so closures with stale `submitted` still see the latest value
@@ -372,20 +448,7 @@ export default function ExamPage() {
   }, [violations, resultId])
 
 
-  // ── Save progress ─────────────────────────────────────────
-  const saveProgress = useCallback(async (showToast = false) => {
-    if (!resultId) return
-    try {
-      await api.post('/student/exams/save-progress', {
-        resultId,
-        answers,
-        currentQuestion: currentIdx,
-        reviewList,
-        currentSubjectIndex,
-      })
-      if (showToast) toast.success('Progress saved', { duration: 1500 })
-    } catch { }
-  }, [resultId, answers, currentIdx, reviewList, currentSubjectIndex])
+
 
   // ── Switch subject (multi-subject free navigation) ─────────
   const handleSwitchSubject = async (targetIndex) => {
@@ -413,6 +476,14 @@ export default function ExamPage() {
       setCurrentSubjectIndex(data.currentSubjectIndex)
       setCurrentSubjectName(data.currentSubject?.subjectName || '')
       setCompletedSubjects(data.completedSubjects || [])
+
+      lastSavedSnapshotRef.current = {
+        answers: data.answers && typeof data.answers === 'object' ? { ...data.answers } : {},
+        reviewList: [],
+        currentIdx: 0,
+        currentSubjectIndex: data.currentSubjectIndex
+      }
+
       // Shared timer — do not reset from response if local countdown is already running;
       // only sync if server remaining is lower (clock skew / late switch)
       if (typeof data.remainingSeconds === 'number') {
@@ -635,6 +706,16 @@ export default function ExamPage() {
             <Maximize size={16} />
           </button>
 
+          {saveStatus === 'error' && (
+            <span className="text-xs text-red-400 font-medium mr-2 animate-pulse" id="save-status-indicator">
+              not saved, retrying...
+            </span>
+          )}
+          {saveStatus === 'saving' && (
+            <span className="text-xs text-blue-400 font-medium mr-2" id="save-status-indicator">
+              Saving...
+            </span>
+          )}
           <button
             onClick={() => { saveProgress(true) }}
             className="btn-secondary btn-sm text-xs"
