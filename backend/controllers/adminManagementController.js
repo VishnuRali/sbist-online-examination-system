@@ -961,7 +961,12 @@ const getLiveMonitorData = async (req, res) => {
       students: studentsDetails
     });
   } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
+    console.error('LIVE MONITOR ERROR:', error);
+
+    res.status(500).json({
+      success: false,
+      message: error.message
+    });
   }
 };
 
