@@ -140,9 +140,6 @@ connectDB().then(async () => {
       const { startReminderEmailJob } = require('./jobs/reminderEmails');
       startReminderEmailJob();
 
-      const { startGoogleFormSync } = require('./jobs/syncGoogleForm');
-      startGoogleFormSync();
-
       const { startEmailWorker } = require('./jobs/emailWorker');
       startEmailWorker();
 

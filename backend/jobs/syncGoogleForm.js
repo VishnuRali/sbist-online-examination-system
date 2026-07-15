@@ -1,4 +1,4 @@
-﻿const cron = require('node-cron');
+const cron = require('node-cron');
 const Student = require('../models/Student');
 const Department = require('../models/Department');
 const { fetchFormResponses, markRowAsSynced, isGoogleConfigured } = require('../utils/googleSheets');
@@ -9,8 +9,21 @@ const bcrypt = require('bcryptjs');
 let lastSyncTime = null;
 let lastSyncResult = { created: 0, skipped: 0, emailsSent: 0, emailsFailed: 0, errors: [] };
 
+let isSyncing = false;
+
 const processFormResponses = async () => {
-  const configured = await isGoogleConfigured();
+  if (isSyncing) {
+    console.log('[GoogleFormSync] Sync is already in progress, rejecting request.');
+    return { 
+      success: false, 
+      reason: 'Synchronization is already in progress. Please wait until it completes.', 
+      created: 0, skipped: 0, emailsSent: 0, emailsFailed: 0, errors: [],
+    };
+  }
+
+  isSyncing = true;
+  try {
+    const configured = await isGoogleConfigured();
   if (!configured) {
     return { 
       success: false, 
@@ -178,17 +191,13 @@ const processFormResponses = async () => {
 
   console.log(`[GoogleFormSync] Done — Created: ${created}, Skipped: ${skipped}, Emails: ${emailsSent}✓ ${emailsFailed}✗`);
   return { success: true, created, skipped, emailsSent, emailsFailed, errors };
+  } finally {
+    isSyncing = false;
+  }
 };
 
 const startGoogleFormSync = () => {
-  cron.schedule('*/5 * * * *', async () => {
-    try {
-      await processFormResponses();
-    } catch (error) {
-      console.error('[GoogleFormSync] Cron error:', error.message);
-    }
-  });
-  console.log('✅ Google Form sync cron started (every 5 minutes)');
+  console.log('ℹ️ Google Form automatic sync cron is disabled (Manual sync only).');
 };
 
 const getSyncStatus = async () => {
