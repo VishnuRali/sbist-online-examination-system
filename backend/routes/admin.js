@@ -31,6 +31,13 @@ const {
   getEmailQueueProgress
 } = require('../controllers/adminManagementController');
 
+const {
+  getStudentPerformanceSummary,
+  getStudentPerformanceTable,
+  getIndividualStudentPerformance,
+  exportStudentPerformance
+} = require('../controllers/analyticsController');
+
 // ==================== DASHBOARD ====================
 router.get('/dashboard', adminOnly, getDashboardStats);
 
@@ -95,6 +102,12 @@ router.post('/sync-google-form', adminOnly, async (req, res) => {
     res.status(500).json({ success: false, reason: error.message });
   }
 });
+
+// ==================== STUDENT PERFORMANCE ANALYTICS ====================
+router.get('/student-performance/summary', adminOnly, getStudentPerformanceSummary);
+router.get('/student-performance/table', adminOnly, getStudentPerformanceTable);
+router.get('/student-performance/student/:studentId', adminOnly, getIndividualStudentPerformance);
+router.get('/student-performance/export', adminOnly, exportStudentPerformance);
 
 // ==================== SYSTEM SETTINGS (Super Admin only) ====================
 router.get('/settings', superAdminOnly, getSettings);

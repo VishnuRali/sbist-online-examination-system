@@ -3,7 +3,7 @@ import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import {
   Mail, RefreshCw, CheckCircle, XCircle, Clock,
-  Send, X, ChevronDown, Download, Filter, Tv
+  Send, X, ChevronDown, Download, Filter, Tv, Calendar
 } from 'lucide-react'
 
 const TYPE_LABELS = {
@@ -15,9 +15,12 @@ const TYPE_LABELS = {
 }
 
 const STATUS_CONFIG = {
-  sent:    { icon: CheckCircle, color: 'badge-green',  label: 'Sent' },
-  failed:  { icon: XCircle,    color: 'badge-red',    label: 'Failed' },
-  pending: { icon: Clock,      color: 'badge-yellow', label: 'Pending' },
+  sent:       { icon: CheckCircle, color: 'badge-green',  label: 'Sent' },
+  failed:     { icon: XCircle,    color: 'badge-red',    label: 'Failed' },
+  pending:    { icon: Clock,      color: 'badge-yellow', label: 'Pending' },
+  queued:     { icon: Clock,      color: 'badge-yellow', label: 'Queued' },
+  scheduled:  { icon: Calendar,   color: 'badge-blue',   label: 'Scheduled' },
+  processing: { icon: RefreshCw,  color: 'badge-purple', label: 'Processing' },
 }
 
 const TYPE_COLORS = {
@@ -345,7 +348,7 @@ export default function EmailLogs() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold gradient-text">Email Logs</h1>
-          <p className="text-slate-400 text-sm mt-1">Track all automated emails sent by the system</p>
+          <p className="text-slate-400 text-sm mt-1">Track all automated emails sent by the system (Welcome credentials, exam announcements, manual reminders)</p>
         </div>
         <div className="flex gap-2">
           {failedCount > 0 && (
@@ -379,6 +382,11 @@ export default function EmailLogs() {
         </div>
       </div>
 
+      {/* Stats Section Label */}
+      <div>
+        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-2">Overall Email History Summary</h2>
+      </div>
+
       {/* Stats */}
       <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
         {stats.map(s => (
@@ -394,29 +402,51 @@ export default function EmailLogs() {
         <div className="glass-card p-5 border border-blue-500/20 bg-slate-800/40 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 fade-in">
           <div className="flex-1 w-full">
             <div className="flex items-center gap-2 mb-2">
-              {(queueProgress.queued > 0 || queueProgress.processing > 0) ? (
+              {queueProgress.processing > 0 ? (
                 <span className="relative flex h-2.5 w-2.5">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
                   <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+                </span>
+              ) : queueProgress.statusText === 'delayed' ? (
+                <span className="relative flex h-2.5 w-2.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-red-500"></span>
                 </span>
               ) : (
                 <CheckCircle size={16} className="text-green-400" />
               )}
               <p className="text-sm font-semibold text-slate-200">
-                {(queueProgress.queued > 0 || queueProgress.processing > 0) ? 'Processing Background Email Notifications...' : 'Background Email Notifications Delivery Complete'}
+                {queueProgress.processing > 0
+                  ? 'Processing Background Email Notifications...'
+                  : queueProgress.statusText === 'delayed'
+                    ? 'Email queue may be delayed'
+                    : queueProgress.scheduled > 0
+                      ? `${queueProgress.scheduled} notification${queueProgress.scheduled > 1 ? 's' : ''} scheduled`
+                      : 'All email notifications processed'}
               </p>
             </div>
+            
             <div className="w-full bg-slate-800 rounded-full h-2.5 mt-2 overflow-hidden border border-slate-700/50">
               <div className="bg-gradient-to-r from-blue-500 to-indigo-500 h-2.5 rounded-full transition-all duration-500" style={{ width: `${queueProgress.percentage}%` }}></div>
             </div>
-            <div className="flex gap-4 mt-3 text-xs text-slate-400">
+            
+            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-3 text-xs text-slate-400">
               <span>Total: <strong className="text-slate-200">{queueProgress.total}</strong></span>
-              <span>Queued: <strong className="text-yellow-400/90">{queueProgress.queued}</strong></span>
-              <span>Processing: <strong className="text-blue-400">{queueProgress.processing}</strong></span>
+              <span>Queued (Ready): <strong className="text-yellow-400/90">{queueProgress.queued}</strong></span>
+              <span>Scheduled: <strong className="text-blue-400">{queueProgress.scheduled}</strong></span>
+              <span>Processing: <strong className="text-purple-400">{queueProgress.processing}</strong></span>
               <span>Sent: <strong className="text-green-400/90">{queueProgress.sent}</strong></span>
               <span>Failed: <strong className="text-red-400">{queueProgress.failed}</strong></span>
             </div>
+            
+            <div className="flex flex-wrap gap-x-4 mt-2 text-[10px] text-slate-500 font-mono">
+              <span>Last updated: {queueProgress.lastUpdated ? new Date(queueProgress.lastUpdated).toLocaleTimeString() : 'N/A'}</span>
+              {queueProgress.nextScheduledTime && (
+                <span className="text-blue-400">Next Scheduled Run: {new Date(queueProgress.nextScheduledTime).toLocaleTimeString()}</span>
+              )}
+            </div>
           </div>
+          
           <div className="text-left sm:text-right shrink-0">
             <p className="text-3xl font-extrabold text-blue-400 font-mono">{queueProgress.percentage}%</p>
             <p className="text-[10px] text-slate-500 uppercase tracking-wider font-bold">Delivery Progress</p>
@@ -474,9 +504,12 @@ export default function EmailLogs() {
               <label className="block text-[10px] font-semibold text-slate-400 mb-1">Status</label>
               <select className="input-field text-xs py-1.5" value={filterStatus} onChange={e => { setFilterStatus(e.target.value); setPage(1) }}>
                 <option value="">All</option>
+                <option value="queued">Queued</option>
+                <option value="scheduled">Scheduled</option>
+                <option value="processing">Processing</option>
                 <option value="sent">Sent</option>
                 <option value="failed">Failed</option>
-                <option value="pending">Pending</option>
+                <option value="retried">Retried</option>
               </select>
             </div>
             <div>

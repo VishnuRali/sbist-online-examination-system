@@ -556,11 +556,7 @@ const retryEmailLog = async (log) => {
     };
   }
 
-  log.status = 'pending';
-  await log.save();
-
   const student = await Student.findById(log.student).populate('department');
-
   const exam = log.exam
     ? await Exam.findById(log.exam).populate('subject department')
     : null;
@@ -575,6 +571,57 @@ const retryEmailLog = async (log) => {
       error: 'Student not found'
     };
   }
+
+  // ── Safety Layer 1: Check if already successfully delivered ──
+  const alreadySent = await EmailLog.findOne({
+    student: log.student,
+    exam: log.exam,
+    type: log.type,
+    status: 'sent',
+    _id: { $ne: log._id }
+  });
+  if (alreadySent) {
+    log.status = 'sent';
+    log.errorMessage = '';
+    log.nextAttemptAt = null;
+    await log.save();
+
+    // Sync matching queue record if it exists
+    const EmailQueue = require('../models/EmailQueue');
+    await EmailQueue.findOneAndUpdate(
+      { exam: log.exam, student: log.student, notificationType: log.type },
+      { $set: { status: 'sent', sentAt: new Date() } }
+    );
+
+    return {
+      success: true,
+      message: 'Already delivered successfully in another log record.'
+    };
+  }
+
+  // ── Safety Layer 2: Check if expired reminder ──
+  const now = new Date();
+  if (log.type.startsWith('reminder_') && exam && exam.startTime && new Date(exam.startTime) <= now) {
+    log.status = 'failed';
+    log.errorMessage = 'Reminder expired: exam has already started or ended';
+    log.nextAttemptAt = null;
+    await log.save();
+
+    // Sync matching queue record if it exists
+    const EmailQueue = require('../models/EmailQueue');
+    await EmailQueue.findOneAndUpdate(
+      { exam: log.exam, student: log.student, notificationType: log.type },
+      { $set: { status: 'failed', failedAt: new Date(), failureReason: 'Reminder expired: exam has already started or ended' } }
+    );
+
+    return {
+      success: false,
+      error: 'Reminder expired'
+    };
+  }
+
+  log.status = 'pending';
+  await log.save();
 
   log.attempts = (log.attempts || 0) + 1;
   log.retried = true;
@@ -623,6 +670,13 @@ const retryEmailLog = async (log) => {
 
     await log.save();
 
+    // Sync matching queue record if it exists
+    const EmailQueue = require('../models/EmailQueue');
+    await EmailQueue.findOneAndUpdate(
+      { exam: log.exam, student: log.student, notificationType: log.type },
+      { $set: { status: 'sent', sentAt: new Date() } }
+    );
+
     return {
       success: true,
       messageId: result.messageId
@@ -644,6 +698,21 @@ const retryEmailLog = async (log) => {
     }
 
     await log.save();
+
+    // Sync matching queue record if it exists
+    const EmailQueue = require('../models/EmailQueue');
+    if (log.attempts >= 4) {
+      await EmailQueue.findOneAndUpdate(
+        { exam: log.exam, student: log.student, notificationType: log.type },
+        { $set: { status: 'failed', failedAt: new Date(), failureReason: log.errorMessage } }
+      );
+    } else {
+      const backoffMs = ([0, 1, 5, 15][log.attempts] || 15) * 60 * 1000;
+      await EmailQueue.findOneAndUpdate(
+        { exam: log.exam, student: log.student, notificationType: log.type },
+        { $set: { status: 'queued', retryCount: log.attempts, nextRetryTime: new Date(Date.now() + backoffMs), failureReason: log.errorMessage } }
+      );
+    }
 
     return {
       success: false,

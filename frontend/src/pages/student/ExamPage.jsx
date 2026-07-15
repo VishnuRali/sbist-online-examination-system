@@ -79,6 +79,8 @@ const QuestionPalette = ({ questions, answers, reviewList, currentIdx, onJump })
 // ──────────────────────────────────────────────────────────────
 // Main Exam Page
 // ──────────────────────────────────────────────────────────────
+const inFlightRequests = {};
+
 export default function ExamPage() {
   const { examId } = useParams()
   const navigate = useNavigate()
@@ -158,14 +160,28 @@ export default function ExamPage() {
   }, [])
 
   const startExamRequest = useCallback(async (accessCode) => {
-    const body = accessCode ? { accessCode } : {}
-    const res = await api.post(`/student/exams/${examId}/start`, body)
-    applyStartResponse(res.data)
-    // Clear location state so refresh resumes without re-prompting
-    if (location.state?.accessCode) {
-      navigate(location.pathname, { replace: true, state: {} })
+    if (inFlightRequests[examId]) {
+      return inFlightRequests[examId];
     }
-    return res.data
+    const body = accessCode ? { accessCode } : {}
+    const promise = api.post(`/student/exams/${examId}/start`, body)
+      .then(res => {
+        applyStartResponse(res.data);
+        // Clear location state so refresh resumes without re-prompting
+        if (location.state?.accessCode) {
+          navigate(location.pathname, { replace: true, state: {} })
+        }
+        return res.data;
+      })
+      .catch(err => {
+        throw err;
+      })
+      .finally(() => {
+        delete inFlightRequests[examId];
+      });
+
+    inFlightRequests[examId] = promise;
+    return promise;
   }, [examId, applyStartResponse, location.pathname, location.state?.accessCode, navigate])
 
   // ── Load exam ──────────────────────────────────────────────

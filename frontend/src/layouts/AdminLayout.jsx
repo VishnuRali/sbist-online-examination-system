@@ -1,10 +1,10 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { Outlet, NavLink, useNavigate } from 'react-router-dom'
 import { useAuth } from '../context/AuthContext'
 import {
   LayoutDashboard, BookOpen, Users, FileText, Building2,
   BookMarked, LogOut, Menu, X, GraduationCap,
-  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon, Tv
+  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon, Tv, TrendingUp
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -21,6 +21,7 @@ export default function AdminLayout() {
     { to: '/admin/students', label: 'Students', icon: Users },
     { to: '/admin/results', label: 'Results', icon: FileText },
     { to: '/admin/live-monitor', label: 'Live Monitor', icon: Tv },
+    { to: '/admin/student-performance', label: 'Student Performance', icon: TrendingUp },
     { to: '/admin/departments', label: 'Departments', icon: Building2 },
     { to: '/admin/subjects', label: 'Subjects', icon: BookMarked },
     { to: '/admin/email-logs', label: 'Email Logs', icon: Mail },

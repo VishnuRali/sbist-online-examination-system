@@ -205,7 +205,7 @@ const getEmailLogs = async (req, res) => {
     const { type, status, department, year, semester, section, exam, subject, dateFrom, dateTo, page = 1, limit = 30, search } = req.query;
     const query = {};
     if (type) query.type = type;
-    if (status) query.status = status;
+    if (status && !['queued', 'scheduled', 'processing'].includes(status)) query.status = status;
     if (department) query.department = department;
     if (year) query.year = String(year).trim();
     if (semester) query.semester = String(semester).trim();
@@ -268,24 +268,180 @@ const getEmailLogs = async (req, res) => {
       retriedCount: 0
     };
 
+    const EmailQueue = require('../models/EmailQueue');
+    const now = new Date();
+    let logs = [];
     let total = 0;
-    if (status) {
-      if (status === 'sent') total = stats.sentCount;
-      else if (status === 'failed') total = stats.failedCount;
-      else if (status === 'pending') total = stats.pendingCount;
-      else total = await EmailLog.countDocuments(query);
-    } else {
-      total = stats.totalEmails;
-    }
 
-    const logs = await EmailLog.find(query)
-      .sort({ createdAt: -1 })
-      .skip((page - 1) * limit)
-      .limit(parseInt(limit))
-      .populate('exam', 'title')
-      .populate('student', 'name studentId rollNumber')
-      .populate('department', 'name code')
-      .lean();
+    if (status === 'queued' || status === 'scheduled' || status === 'processing') {
+      const qQuery = {};
+      if (exam) qQuery.exam = exam;
+      if (status === 'queued') {
+        qQuery.status = 'queued';
+        qQuery.nextRetryTime = { $lte: now };
+      } else if (status === 'scheduled') {
+        qQuery.status = 'queued';
+        qQuery.nextRetryTime = { $gt: now };
+      } else if (status === 'processing') {
+        qQuery.status = 'processing';
+      }
+
+      let queueItems = await EmailQueue.find(qQuery)
+        .populate('exam', 'title')
+        .populate({
+          path: 'student',
+          select: 'name studentId rollNumber department year semester section',
+          populate: { path: 'department', select: 'name code' }
+        })
+        .sort({ createdAt: -1 })
+        .lean();
+
+      if (department) {
+        queueItems = queueItems.filter(q => q.student?.department?._id?.toString() === department);
+      }
+      if (year) {
+        queueItems = queueItems.filter(q => String(q.student?.year) === String(year).trim());
+      }
+      if (semester) {
+        queueItems = queueItems.filter(q => String(q.student?.semester) === String(semester).trim());
+      }
+      if (section) {
+        queueItems = queueItems.filter(q => String(q.student?.section || '').trim().toUpperCase() === String(section).trim().toUpperCase());
+      }
+      if (search) {
+        const s = search.toLowerCase().trim();
+        queueItems = queueItems.filter(q =>
+          q.email?.toLowerCase().includes(s) ||
+          q.student?.name?.toLowerCase().includes(s) ||
+          q.student?.studentId?.toLowerCase().includes(s) ||
+          q.student?.rollNumber?.toLowerCase().includes(s)
+        );
+      }
+
+      total = queueItems.length;
+      const paginatedItems = queueItems.slice((page - 1) * limit, page * limit);
+
+      logs = paginatedItems.map(q => {
+        const isScheduled = q.status === 'queued' && q.nextRetryTime > now;
+        return {
+          _id: q._id,
+          to: q.email,
+          studentName: q.student?.name || '—',
+          studentId: q.student?.studentId || '—',
+          type: q.notificationType,
+          status: isScheduled ? 'scheduled' : q.status,
+          subject: q.notificationType === 'welcome'
+            ? `🎓 Welcome to SBIT Exam Portal`
+            : `📚 Exam Announcement: ${q.exam?.title || 'Exam'}`,
+          exam: q.exam,
+          student: q.student,
+          errorMessage: q.failureReason || '',
+          attemptedAt: q.updatedAt,
+          createdAt: q.createdAt,
+          attempts: q.retryCount + 1,
+          nextAttemptAt: q.nextRetryTime,
+          department: q.student?.department,
+          year: q.student?.year,
+          semester: q.student?.semester,
+          section: q.student?.section,
+          isQueueRecord: true
+        };
+      });
+    } else {
+      const logQuery = { ...query };
+      if (status === 'retried') {
+        // 'retried' is a boolean field, not a status enum value
+        logQuery.retried = true;
+        delete logQuery.status;
+      } else if (status) {
+        logQuery.status = status;
+      }
+
+      logs = await EmailLog.find(logQuery)
+        .sort({ createdAt: -1 })
+        .skip((page - 1) * limit)
+        .limit(parseInt(limit))
+        .populate('exam', 'title')
+        .populate('student', 'name studentId rollNumber')
+        .populate('department', 'name code')
+        .lean();
+
+      if (status) {
+        if (status === 'sent') total = stats.sentCount;
+        else if (status === 'failed') total = stats.failedCount;
+        else if (status === 'pending') total = stats.pendingCount;
+        else total = await EmailLog.countDocuments(logQuery);
+      } else {
+        total = stats.totalEmails;
+      }
+
+      if (!status && parseInt(page) === 1) {
+        const qQuery = { status: { $in: ['queued', 'processing'] } };
+        if (exam) qQuery.exam = exam;
+
+        let activeQueue = await EmailQueue.find(qQuery)
+          .populate('exam', 'title')
+          .populate({
+            path: 'student',
+            select: 'name studentId rollNumber department year semester section',
+            populate: { path: 'department', select: 'name code' }
+          })
+          .sort({ createdAt: -1 })
+          .lean();
+
+        if (department) {
+          activeQueue = activeQueue.filter(q => q.student?.department?._id?.toString() === department);
+        }
+        if (year) {
+          activeQueue = activeQueue.filter(q => String(q.student?.year) === String(year).trim());
+        }
+        if (semester) {
+          activeQueue = activeQueue.filter(q => String(q.student?.semester) === String(semester).trim());
+        }
+        if (section) {
+          activeQueue = activeQueue.filter(q => String(q.student?.section || '').trim().toUpperCase() === String(section).trim().toUpperCase());
+        }
+        if (search) {
+          const s = search.toLowerCase().trim();
+          activeQueue = activeQueue.filter(q =>
+            q.email?.toLowerCase().includes(s) ||
+            q.student?.name?.toLowerCase().includes(s) ||
+            q.student?.studentId?.toLowerCase().includes(s) ||
+            q.student?.rollNumber?.toLowerCase().includes(s)
+          );
+        }
+
+        const mappedQueue = activeQueue.map(q => {
+          const isScheduled = q.status === 'queued' && q.nextRetryTime > now;
+          return {
+            _id: q._id,
+            to: q.email,
+            studentName: q.student?.name || '—',
+            studentId: q.student?.studentId || '—',
+            type: q.notificationType,
+            status: isScheduled ? 'scheduled' : q.status,
+            subject: q.notificationType === 'welcome'
+              ? `🎓 Welcome to SBIT Exam Portal`
+              : `📚 Exam Announcement: ${q.exam?.title || 'Exam'}`,
+            exam: q.exam,
+            student: q.student,
+            errorMessage: q.failureReason || '',
+            attemptedAt: q.updatedAt,
+            createdAt: q.createdAt,
+            attempts: q.retryCount + 1,
+            nextAttemptAt: q.nextRetryTime,
+            department: q.student?.department,
+            year: q.student?.year,
+            semester: q.student?.semester,
+            section: q.student?.section,
+            isQueueRecord: true
+          };
+        });
+
+        logs = [...mappedQueue, ...logs];
+        total += mappedQueue.length;
+      }
+    }
 
     res.json({
       success: true,
@@ -349,13 +505,14 @@ const getEmailQueueProgress = async (req, res) => {
     if (examId) query.exam = examId;
 
     const EmailQueue = require('../models/EmailQueue');
+    const now = new Date();
+
     const statsResult = await EmailQueue.aggregate([
       { $match: query },
       {
         $group: {
           _id: null,
           total: { $sum: 1 },
-          queued: { $sum: { $cond: [{ $eq: ['$status', 'queued'] }, 1, 0] } },
           processing: { $sum: { $cond: [{ $eq: ['$status', 'processing'] }, 1, 0] } },
           sent: { $sum: { $cond: [{ $eq: ['$status', 'sent'] }, 1, 0] } },
           failed: { $sum: { $cond: [{ $eq: ['$status', 'failed'] }, 1, 0] } },
@@ -365,11 +522,52 @@ const getEmailQueueProgress = async (req, res) => {
 
     const stats = statsResult[0] || {
       total: 0,
-      queued: 0,
       processing: 0,
       sent: 0,
       failed: 0,
     };
+
+    // Scheduled: queued status but nextRetryTime is in the future
+    const scheduled = await EmailQueue.countDocuments({
+      ...query,
+      status: 'queued',
+      nextRetryTime: { $gt: now }
+    });
+
+    // Queued: queued status and nextRetryTime is now or past
+    const queued = await EmailQueue.countDocuments({
+      ...query,
+      status: 'queued',
+      nextRetryTime: { $lte: now }
+    });
+
+    const nextJob = await EmailQueue.findOne({
+      ...query,
+      status: 'queued',
+      nextRetryTime: { $gt: now }
+    })
+    .sort({ nextRetryTime: 1 })
+    .select('nextRetryTime')
+    .lean();
+
+    const nextScheduledTime = nextJob ? nextJob.nextRetryTime : null;
+
+    const delayedJob = await EmailQueue.findOne({
+      ...query,
+      status: 'queued',
+      nextRetryTime: { $lte: new Date(Date.now() - 60 * 1000) }
+    }).lean();
+
+    const isDelayed = !!delayedJob;
+
+    let statusText = 'idle';
+    if (stats.processing > 0) {
+      statusText = 'active';
+    } else if (queued > 0) {
+      statusText = isDelayed ? 'delayed' : 'active';
+    } else if (scheduled > 0) {
+      statusText = 'scheduled';
+    }
 
     const completedPercent = stats.total > 0
       ? Math.round((stats.sent / stats.total) * 100)
@@ -379,11 +577,15 @@ const getEmailQueueProgress = async (req, res) => {
       success: true,
       progress: {
         total: stats.total,
-        queued: stats.queued,
+        queued,
+        scheduled,
         processing: stats.processing,
         sent: stats.sent,
         failed: stats.failed,
         percentage: completedPercent,
+        nextScheduledTime,
+        statusText,
+        lastUpdated: new Date()
       }
     });
   } catch (error) {

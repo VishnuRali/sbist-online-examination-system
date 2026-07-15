@@ -33,6 +33,32 @@ const sendEmailForJob = async (job) => {
       return;
     }
 
+    // ── Safety Layer 1: Check if already successfully delivered ──
+    const alreadySent = await EmailLog.findOne({
+      student: job.student,
+      exam: job.exam,
+      type: job.notificationType,
+      status: 'sent'
+    });
+    if (alreadySent) {
+      console.log(`[EmailWorker] Job ${job._id} skipped: already delivered successfully in log.`);
+      job.status = 'sent';
+      job.sentAt = new Date();
+      await job.save();
+      return;
+    }
+
+    // ── Safety Layer 2: Check if expired reminder ──
+    const now = new Date();
+    if (job.notificationType.startsWith('reminder_') && exam.startTime && new Date(exam.startTime) <= now) {
+      console.log(`[EmailWorker] Job ${job._id} skipped: reminder has expired (exam already started/ended).`);
+      job.status = 'failed';
+      job.failedAt = now;
+      job.failureReason = 'Reminder expired: exam has already started or ended';
+      await job.save();
+      return;
+    }
+
     const portalUrl =
       process.env.EXAM_URL ||
       process.env.FRONTEND_URL ||
@@ -142,6 +168,8 @@ const processBatch = async () => {
 
     if (claimedJob) {
       await sendEmailForJob(claimedJob);
+      // Introduce a 200ms delay between Brevo requests in background batch
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
   }
 };

@@ -263,22 +263,50 @@ const startExam = async (req, res) => {
         ? exam.subjects.reduce((sum, s) => sum + (Number(s.totalMarks) || 0), 0)
         : questions.reduce((sum, q) => sum + q.marks, 0);
 
-      result = new Result({
-        student: student._id,
-        exam: examId,
-        totalMarks,
-        startedAt: now,
-        savedProgress: {
-          answers: {},
-          reviewList: [],
-          currentQuestion: 0,
-          currentSubjectIndex: 0,
-          completedSubjects: [],
-          optionMappings,
-          lastSaved: now,
+      try {
+        result = await Result.findOneAndUpdate(
+          { student: student._id, exam: examId },
+          {
+            $setOnInsert: {
+              student: student._id,
+              exam: examId,
+              totalMarks,
+              startedAt: now,
+              status: 'in_progress',
+              savedProgress: {
+                answers: {},
+                reviewList: [],
+                currentQuestion: 0,
+                currentSubjectIndex: 0,
+                completedSubjects: [],
+                optionMappings,
+                lastSaved: now,
+              }
+            }
+          },
+          {
+            upsert: true,
+            new: true,
+            setDefaultsOnInsert: true
+          }
+        );
+      } catch (err) {
+        if (err.code === 11000) {
+          result = await Result.findOne({ student: student._id, exam: examId });
+          if (!result) {
+            return res.status(409).json({
+              success: false,
+              message: 'This exam attempt already exists. Please refresh the page.'
+            });
+          }
+        } else {
+          throw err;
         }
-      });
-      await result.save();
+      }
+
+      if (result && result.status !== 'in_progress') {
+        return res.status(403).json({ success: false, message: 'You have already submitted this exam' });
+      }
     } else if (Object.keys(optionMappings).length > 0) {
       result.savedProgress.optionMappings = { ...existingMappingsObj, ...optionMappings };
       result.markModified('savedProgress');
@@ -294,6 +322,7 @@ const startExam = async (req, res) => {
 
     res.json({
       success: true,
+      message: inProgressResult ? 'Your existing exam session has been restored.' : 'Exam session initialized successfully.',
       exam: {
         _id: exam._id,
         title: exam.title,
@@ -323,6 +352,12 @@ const startExam = async (req, res) => {
       remainingSeconds,
     });
   } catch (error) {
+    if (error.code === 11000) {
+      return res.status(409).json({
+        success: false,
+        message: 'This exam attempt already exists. Please refresh the page.'
+      });
+    }
     res.status(500).json({ success: false, message: error.message });
   }
 };
