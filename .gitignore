@@ -55,3 +55,12 @@ get_latest_student.js
 # ─── Uploads ────────────────────────────────────────────
 uploads/
 tmp/
+# Local development and load-test files
+backend/tests/
+backend/scratch/
+backend/scripts/
+backend/seedTestStudents.js
+
+
+# Temporary backup file
+old_examController.js
