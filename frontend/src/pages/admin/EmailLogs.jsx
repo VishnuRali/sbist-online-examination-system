@@ -3,8 +3,9 @@ import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import {
   Mail, RefreshCw, CheckCircle, XCircle, Clock,
-  Send, X, ChevronDown, Download, Filter, Tv, Calendar
+  Send, X, ChevronDown, Download, Filter, Tv, Calendar, Trash2, AlertTriangle
 } from 'lucide-react'
+import { useAuth } from '../../context/AuthContext'
 
 const TYPE_LABELS = {
   welcome:      'Welcome',
@@ -32,6 +33,9 @@ const TYPE_COLORS = {
 }
 
 export default function EmailLogs() {
+  const { user } = useAuth()
+  const isSuperAdmin = user?.role === 'super_admin'
+
   const [logs, setLogs]               = useState([])
   const [loading, setLoading]         = useState(true)
   const [total, setTotal]             = useState(0)
@@ -83,6 +87,25 @@ export default function EmailLogs() {
   const [sending, setSending]             = useState(false)
 
   const [queueProgress, setQueueProgress] = useState(null)
+  
+  const [showCleanupDropdown, setShowCleanupDropdown] = useState(false)
+  const [showCleanupModal, setShowCleanupModal] = useState(false)
+  const [cleanupRange, setCleanupRange] = useState('30')
+  const [cleaning, setCleaning] = useState(false)
+
+  const handleCleanup = async () => {
+    setCleaning(true)
+    try {
+      const res = await api.post('/admin/email-logs/cleanup', { range: cleanupRange })
+      toast.success(res.data.message || 'Email logs cleaned up successfully.')
+      setShowCleanupModal(false)
+      fetchLogs()
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Failed to clean up email logs')
+    } finally {
+      setCleaning(false)
+    }
+  }
 
   const fetchQueueProgress = useCallback(async () => {
     try {
@@ -372,6 +395,71 @@ export default function EmailLogs() {
                 )}
               </button>
             </>
+          )}
+          {isSuperAdmin && (
+            <div className="relative">
+              <button
+                onClick={() => setShowCleanupDropdown(!showCleanupDropdown)}
+                className="btn-danger btn-sm flex items-center gap-1.5 text-xs font-semibold"
+                type="button"
+              >
+                <Trash2 size={14} /> Cleanup
+                <ChevronDown size={12} className={`transition-transform duration-200 ${showCleanupDropdown ? 'rotate-180' : ''}`} />
+              </button>
+              {showCleanupDropdown && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setShowCleanupDropdown(false)} />
+                  <div className="absolute right-0 mt-2 w-64 bg-slate-900 border border-slate-700/80 rounded-xl shadow-2xl z-20 py-1.5 animate-in fade-in slide-in-from-top-2 duration-150">
+                    <button
+                      onClick={() => {
+                        setShowCleanupDropdown(false)
+                        setCleanupRange('7')
+                        setShowCleanupModal(true)
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-slate-800 text-xs text-slate-300 hover:text-slate-100 transition-colors"
+                      type="button"
+                    >
+                      Delete Logs Older Than 7 Days
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCleanupDropdown(false)
+                        setCleanupRange('30')
+                        setShowCleanupModal(true)
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-slate-800 text-xs text-slate-300 hover:text-slate-100 font-semibold transition-colors flex justify-between items-center"
+                      type="button"
+                    >
+                      <span>Delete Logs Older Than 30 Days</span>
+                      <span className="text-[10px] bg-blue-500/20 text-blue-400 px-1.5 py-0.5 rounded-full font-bold">Recommended</span>
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowCleanupDropdown(false)
+                        setCleanupRange('90')
+                        setShowCleanupModal(true)
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-slate-800 text-xs text-slate-300 hover:text-slate-100 transition-colors"
+                      type="button"
+                    >
+                      Delete Logs Older Than 90 Days
+                    </button>
+                    <div className="border-t border-slate-800 my-1" />
+                    <button
+                      onClick={() => {
+                        setShowCleanupDropdown(false)
+                        setCleanupRange('all')
+                        setShowCleanupModal(true)
+                      }}
+                      className="w-full text-left px-4 py-2 hover:bg-red-950/20 text-xs text-red-400 hover:text-red-350 transition-colors font-bold"
+                      type="button"
+                    >
+                      Delete All Logs
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
           )}
           <button onClick={openSendModal} className="btn-primary btn-sm flex gap-2">
             <Send size={14} /> Send Notification
@@ -940,6 +1028,57 @@ export default function EmailLogs() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ── Cleanup Confirmation Modal ─────────────────────────── */}
+      {showCleanupModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glass-card w-full max-w-md slide-up p-5 space-y-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 bg-red-500/20 rounded-xl flex items-center justify-center border border-red-500/30">
+                <AlertTriangle size={18} className="text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-base font-bold text-slate-100">Confirm Log Cleanup</h2>
+                <p className="text-xs text-slate-400">Permanently delete system records</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-300">
+              {cleanupRange === 'all'
+                ? "Are you sure you want to permanently delete ALL email logs? This action cannot be undone."
+                : `Are you sure you want to permanently delete email logs older than ${cleanupRange} days?`}
+            </p>
+
+            <div className="p-3 bg-red-500/10 border border-red-500/20 rounded-xl text-xs text-red-400">
+              ⚠️ Warning: This deletion is permanent and cannot be recovered from the database.
+            </div>
+
+            {/* Actions */}
+            <div className="flex gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => setShowCleanupModal(false)}
+                disabled={cleaning}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleCleanup}
+                disabled={cleaning}
+                className="btn-danger flex-1 flex items-center justify-center gap-2"
+              >
+                {cleaning ? (
+                  <><div className="spinner !w-4 !h-4 !border-t-white" /> Deleting...</>
+                ) : (
+                  <><Trash2 size={14} /> Delete</>
+                )}
+              </button>
+            </div>
           </div>
         </div>
       )}
