@@ -712,21 +712,42 @@ const deleteStudent = async (req, res) => {
     const student = await Student.findById(studentId);
     if (!student) return res.status(404).json({ success: false, message: 'Student not found' });
 
-    const attempts = await Result.countDocuments({ student: studentId });
-    if (attempts > 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Cannot delete student because they have attempted one or more exams'
-      });
-    }
+    // ── Cascade delete: remove all documents referencing this student ──────
 
+    // 1. Remove all exam results (includes embedded answers, savedProgress, etc.)
+    await Result.deleteMany({ student: studentId });
+
+    // 2. Remove all pending/queued email notifications for this student
+    const EmailQueue = require('../models/EmailQueue');
+    await EmailQueue.deleteMany({ student: studentId });
+
+    // 3. Nullify the student reference in email logs (preserve log history but
+    //    remove the foreign-key reference so no orphan ObjectId refs remain).
+    const EmailLog = require('../models/EmailLog');
+    await EmailLog.updateMany(
+      { student: studentId },
+      { $set: { student: null } }
+    );
+
+    // 4. If the student is currently inside an active exam, clear them from
+    //    any in-progress result document (already handled by step 1) and
+    //    update the Student document itself (no-op — we're about to delete it).
+
+    // 5. Delete the student document itself
     await Student.findByIdAndDelete(studentId);
 
     if (req.admin) {
-      await req.admin.logActivity('DELETE_STUDENT', `Deleted student ${student.studentId} (${student.name})`, req.ip);
+      await req.admin.logActivity(
+        'DELETE_STUDENT_CASCADE',
+        `Super Admin cascade-deleted student ${student.studentId} (${student.name}) and all associated examination data`,
+        req.ip
+      );
     }
 
-    res.json({ success: true, message: 'Student deleted successfully' });
+    res.json({
+      success: true,
+      message: 'Student and all associated examination data deleted successfully.'
+    });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

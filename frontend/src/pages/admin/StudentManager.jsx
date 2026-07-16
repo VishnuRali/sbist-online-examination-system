@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback, useRef } from 'react'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
 import { formatDateTime } from '../../utils/helpers'
+import { useAuth } from '../../context/AuthContext'
 import {
   Users, Search, RefreshCw, Key, Power, LogOut, Download, CloudDownload,
   X, CheckCircle, AlertTriangle, ChevronDown, ChevronUp, Upload, Mail, MailX,
@@ -403,6 +404,7 @@ function BulkActionModal({ action, selectedCount, departments, onConfirm, onClos
 
 // ─── Main Component ───────────────────────────────────────────
 export default function StudentManager() {
+  const { user } = useAuth()
   const [students, setStudents] = useState([])
   const [activeStudents, setActiveStudents] = useState([])
   const [loading, setLoading] = useState(true)
@@ -432,6 +434,8 @@ export default function StudentManager() {
   const [editingStudent, setEditingStudent] = useState(null)
   const [auditStudent, setAuditStudent] = useState(null)
   const [showAddModal, setShowAddModal] = useState(false)
+  const [deletingStudent, setDeletingStudent] = useState(null)
+  const [isDeleting, setIsDeleting] = useState(false)
 
   const LIMIT = 15
   const debouncedSearch = useDebounce(search, 400)
@@ -490,16 +494,22 @@ export default function StudentManager() {
     }
   }
 
-  const handleDeleteStudent = async (student) => {
-    if (!window.confirm(`Are you sure you want to delete student ${student.name}? This action cannot be undone.`)) {
-      return
-    }
+  const handleDeleteStudent = (student) => {
+    setDeletingStudent(student)
+  }
+
+  const confirmDeleteStudent = async () => {
+    if (!deletingStudent) return
+    setIsDeleting(true)
     try {
-      const res = await api.delete(`/admin/students/${student._id}`)
-      toast.success(res.data.message || 'Student deleted successfully')
+      const res = await api.delete(`/admin/students/${deletingStudent._id}`)
+      toast.success(res.data.message || 'Student and all associated examination data deleted successfully.')
+      setDeletingStudent(null)
       load()
     } catch (err) {
       toast.error(err.response?.data?.message || 'Failed to delete student')
+    } finally {
+      setIsDeleting(false)
     }
   }
 
@@ -873,7 +883,9 @@ export default function StudentManager() {
                       <button onClick={() => setAuditStudent(s)} title="Audit Log" className="btn-icon text-slate-400 hover:text-violet-400 hover:bg-violet-500/10"><ClipboardList size={14} /></button>
                       <button onClick={() => resetCredentials(s._id)} title="Reset Password" className="btn-icon text-slate-400 hover:text-yellow-400 hover:bg-yellow-500/10"><Key size={14} /></button>
                       <button onClick={() => toggleStatus(s._id)} title={s.isActive ? 'Deactivate' : 'Activate'} className="btn-icon text-slate-400 hover:text-blue-400 hover:bg-blue-500/10"><Power size={14} /></button>
-                      <button onClick={() => handleDeleteStudent(s)} title="Delete Student" className="btn-icon text-slate-400 hover:text-red-400 hover:bg-red-500/10"><Trash2 size={14} /></button>
+                      {user?.role === 'super_admin' && (
+                        <button onClick={() => handleDeleteStudent(s)} title="Delete Student" className="btn-icon text-slate-400 hover:text-red-400 hover:bg-red-500/10"><Trash2 size={14} /></button>
+                      )}
                       {s.isLoggedIn && (
                         <button onClick={() => forceLogout(s._id)} title="Force Logout" className="btn-icon text-slate-400 hover:text-red-400 hover:bg-red-500/10"><LogOut size={14} /></button>
                       )}
@@ -999,6 +1011,61 @@ export default function StudentManager() {
           onConfirm={handleBulkConfirm}
           onClose={() => setBulkAction(null)}
         />
+      )}
+      {/* ── Delete Student Confirmation Modal ── */}
+      {deletingStudent && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className="glass-card w-full max-w-md p-6 slide-up">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 bg-red-500/20 rounded-xl flex items-center justify-center border border-red-500/30">
+                <AlertTriangle size={20} className="text-red-400" />
+              </div>
+              <div>
+                <h2 className="text-lg font-bold text-slate-100 font-['Outfit']">Delete Student</h2>
+                <p className="text-xs text-slate-400">ID: {deletingStudent.studentId} · Roll: {deletingStudent.rollNumber}</p>
+              </div>
+            </div>
+
+            <div className="space-y-3 mb-5">
+              <p className="text-sm text-slate-300">
+                Are you sure you want to delete <span className="font-semibold text-slate-100">{deletingStudent.name}</span>?
+              </p>
+              
+              <div className="bg-red-500/10 border border-red-500/25 rounded-xl p-3 space-y-2">
+                <p className="text-xs font-semibold text-red-400 uppercase tracking-wider flex items-center gap-1.5">
+                  <AlertTriangle size={12} /> Permanent Action
+                </p>
+                <p className="text-xs text-slate-300 leading-relaxed">
+                  This action is irreversible. Deleting this student will also permanently erase all associated examination records, including results, logs, email queue records, attempt states, and saved progress from the database.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button 
+                onClick={() => setDeletingStudent(null)} 
+                disabled={isDeleting}
+                className="btn-secondary flex-1"
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmDeleteStudent} 
+                disabled={isDeleting}
+                className="btn-primary flex-1 !bg-red-600 hover:!bg-red-700 border-none flex items-center justify-center gap-2"
+              >
+                {isDeleting ? (
+                  <>
+                    <div className="spinner w-4 h-4" />
+                    Deleting...
+                  </>
+                ) : (
+                  'Delete Permanently'
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

@@ -44,7 +44,7 @@ router.get('/dashboard', adminOnly, getDashboardStats);
 // ==================== STUDENTS ====================
 router.get('/students', adminOnly, getAllStudents);
 router.post('/students', adminOnly, createStudent);
-router.delete('/students/:studentId', adminOnly, deleteStudent);
+router.delete('/students/:studentId', superAdminOnly, deleteStudent);
 router.get('/students/active', adminOnly, getActiveStudents);
 router.post('/students/:studentId/credentials', adminOnly, generateStudentCredentials);
 router.patch('/students/:studentId/toggle', adminOnly, toggleStudentStatus);
