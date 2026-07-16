@@ -45,6 +45,7 @@ const examSchema = new mongoose.Schema({
   showResultAfterExam: { type: Boolean, default: true },
   allowDownloadResult: { type: Boolean, default: true },
   maxViolations: { type: Number, default: 3 },
+  enableAIProctoring: { type: Boolean, default: false },
   accessCode: { type: String, required: true, match: /^\d{6}$/ },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
   totalQuestions: { type: Number, default: 0 },

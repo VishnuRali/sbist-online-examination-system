@@ -268,7 +268,7 @@ export default function ResultsManager() {
                 <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
                 <select className="input-field text-xs py-1.5" value={filterSection} onChange={e => setFilterSection(e.target.value)}>
                   <option value="">All</option>
-                  {['A','B','C','D','E'].map(s => <option key={s} value={s}>Sec {s}</option>)}
+                  {['A','B','C'].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -339,7 +339,7 @@ export default function ResultsManager() {
               <tbody>
                 {results.map((r, i) => {
                   const timeSpent = r.timeSpent ? `${Math.floor(r.timeSpent / 60)}m ${r.timeSpent % 60}s` : '—'
-                  const displaySection = r.student?.section ? `Sec ${r.student.section}` : '—'
+                  const displaySection = r.student?.section ? r.student.section : '—'
                   return (
                     <tr key={r._id || i}>
                       <td>

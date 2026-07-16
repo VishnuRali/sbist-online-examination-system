@@ -140,6 +140,15 @@ const createExam = async (req, res) => {
     if (req.body.startTime) req.body.startTime = parseToIST(req.body.startTime);
     if (req.body.endTime) req.body.endTime = parseToIST(req.body.endTime);
 
+    const targetSections = Array.isArray(req.body.sections) && req.body.sections.length > 0
+      ? req.body.sections.map(s => String(s).trim().toUpperCase())
+      : (req.body.section ? [String(req.body.section).trim().toUpperCase()] : []);
+
+    const invalidSection = targetSections.find(s => !['A', 'B', 'C'].includes(s));
+    if (invalidSection) {
+      return res.status(400).json({ success: false, message: `Invalid section: "${invalidSection}". Allowed sections: A, B, or C.` });
+    }
+
     await validateExamOverlap(req.body);
     const examData = { ...req.body, createdBy: req.admin._id };
     // Always generate server-side — ignore any client-supplied accessCode
@@ -182,6 +191,15 @@ const updateExam = async (req, res) => {
   try {
     if (req.body.startTime) req.body.startTime = parseToIST(req.body.startTime);
     if (req.body.endTime) req.body.endTime = parseToIST(req.body.endTime);
+
+    const targetSections = Array.isArray(req.body.sections) && req.body.sections.length > 0
+      ? req.body.sections.map(s => String(s).trim().toUpperCase())
+      : (req.body.section ? [String(req.body.section).trim().toUpperCase()] : []);
+
+    const invalidSection = targetSections.find(s => !['A', 'B', 'C'].includes(s));
+    if (invalidSection) {
+      return res.status(400).json({ success: false, message: `Invalid section: "${invalidSection}". Allowed sections: A, B, or C.` });
+    }
 
     await validateExamOverlap(req.body, req.params.id);
 
@@ -260,11 +278,9 @@ const deleteExam = async (req, res) => {
 
 const publishExam = async (req, res) => {
   try {
-    console.log(`[PUBLISH] Requested exam ID: ${req.params.id}`);
+    console.log(`[PUBLISH] Publishing exam: ${req.params.id}`);
     const exam = await Exam.findById(req.params.id);
     if (!exam) return res.status(404).json({ success: false, message: 'Exam not found' });
-    console.log(`[PUBLISH] Loaded exam ID: ${exam._id}`);
-    console.log(`[PUBLISH] Loaded exam title: ${exam.title}`);
 
     const questionCount = await Question.countDocuments({ exam: req.params.id });
     if (questionCount === 0) {

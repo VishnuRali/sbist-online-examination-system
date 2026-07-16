@@ -1,4 +1,4 @@
-﻿import { useState } from 'react'
+import { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useAuth } from '../../context/AuthContext'
 import api from '../../utils/api'
@@ -102,20 +102,20 @@ export default function Login() {
             <form onSubmit={handleSubmit} className="space-y-5">
               <div>
                 <label className="input-label">
-                  {mode === 'admin' ? 'Email Address' : 'Student ID / Roll Number'}
+                  {mode === 'admin' ? 'Email Address' : 'Student ID or Email'}
                 </label>
                 <input
                   type={mode === 'admin' ? 'email' : 'text'}
                   value={form.identifier}
                   onChange={e => setForm(f => ({ ...f, identifier: e.target.value }))}
-                  placeholder={mode === 'admin' ? 'admin@sbit.edu' : 'Enter Student ID or Roll Number'}
+                  placeholder={mode === 'admin' ? 'admin@sbit.edu' : 'Enter Student ID or Email'}
                   className="input-field"
                   required
                   autoFocus
                 />
                 {mode === 'student' && (
                   <p className="text-xs text-slate-500 mt-1">
-                    💡 Log in using your Student ID or Roll Number
+                    💡 Log in using your Student ID or Email
                   </p>
                 )}
               </div>

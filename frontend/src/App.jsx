@@ -19,6 +19,7 @@ import SubjectManager from './pages/admin/SubjectManager'
 import AdminManager from './pages/admin/AdminManager'
 import EmailLogs from './pages/admin/EmailLogs'
 import MailSettings from './pages/admin/MailSettings'
+import GoogleFormSettings from './pages/admin/GoogleFormSettings'
 import LiveExamMonitor from './pages/admin/LiveExamMonitor'
 import StudentPerformance from './pages/admin/StudentPerformance'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -109,6 +110,11 @@ function App() {
         <Route path="settings" element={
           <ProtectedRoute requiredRole="super_admin">
             <MailSettings />
+          </ProtectedRoute>
+        } />
+        <Route path="google-sync-settings" element={
+          <ProtectedRoute requiredRole="super_admin">
+            <GoogleFormSettings />
           </ProtectedRoute>
         } />
       </Route>

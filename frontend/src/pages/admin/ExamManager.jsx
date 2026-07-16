@@ -20,7 +20,7 @@ const EMPTY_FORM = {
   description: '', instructions: '', duration: 60, totalMarks: 100,
   passMarks: 40, startTime: '', endTime: '', randomizeQuestions: false,
   randomizeOptions: false, showResultAfterExam: true, allowDownloadResult: true,
-  maxViolations: 3, negativeMarking: false,
+  maxViolations: 3, negativeMarking: false, enableAIProctoring: false,
   subjects: [],
 }
 
@@ -309,6 +309,7 @@ export default function ExamManager() {
       subjects: exam.subjects || [],
       examType: exam.examType || 'single',
       sections: exam.sections || (exam.section ? [exam.section] : []),
+      enableAIProctoring: exam.enableAIProctoring || false,
     })
     setShowModal(true)
   }
@@ -513,7 +514,7 @@ export default function ExamManager() {
               <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
               <select className="input-field text-xs py-1.5" value={filterSection} onChange={e => setFilterSection(e.target.value)}>
                 <option value="">All</option>
-                {['A','B','C','D','E'].map(s => <option key={s} value={s}>Sec {s}</option>)}
+                {['A','B','C'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -709,7 +710,7 @@ export default function ExamManager() {
                       />
                       All Sections
                     </label>
-                    {['A', 'B', 'C', 'D', 'E', 'F'].map(sec => {
+                    {['A', 'B', 'C'].map(sec => {
                       const isChecked = form.sections && form.sections.includes(sec);
                       return (
                         <label key={sec} className="flex items-center gap-2 cursor-pointer text-xs font-semibold text-slate-300">
@@ -732,7 +733,7 @@ export default function ExamManager() {
                             }}
                             className="w-4 h-4 rounded border-slate-600 bg-slate-700 accent-blue-500 cursor-pointer"
                           />
-                          Section {sec}
+                          {sec}
                         </label>
                       );
                     })}
@@ -781,6 +782,30 @@ export default function ExamManager() {
                   <label className="input-label">Instructions</label>
                   <textarea value={form.instructions} onChange={e => setForm(f => ({ ...f, instructions: e.target.value }))}
                     className="input-field" rows={3} placeholder="Enter exam instructions for students..." />
+                </div>
+
+                {/* AI Proctoring Selection */}
+                <div className="sm:col-span-2 bg-slate-800/40 p-4 rounded-xl border border-slate-700/50 space-y-2">
+                  <label className="input-label text-sm font-semibold text-blue-400">Enable AI Proctoring</label>
+                  <div className="flex gap-3">
+                    {[
+                      { value: false, label: '☐ Disabled' },
+                      { value: true, label: '☑ Enabled' },
+                    ].map(({ value, label }) => (
+                      <button key={String(value)} type="button"
+                        onClick={() => setForm(f => ({ ...f, enableAIProctoring: value }))}
+                        className={`flex-1 py-2 px-4 rounded-xl border text-center transition-all cursor-pointer ${
+                          form.enableAIProctoring === value
+                            ? 'border-blue-500 bg-blue-500/15 text-blue-300 font-semibold'
+                            : 'border-slate-700/50 bg-slate-800/40 text-slate-400 hover:border-slate-600'
+                        }`}>
+                        <div className="text-sm">{label}</div>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="text-[10px] text-slate-500 mt-1">
+                    When enabled, students will be monitored in real-time using their webcam.
+                  </p>
                 </div>
 
                 {/* Toggles */}

@@ -189,6 +189,14 @@ const processFormResponses = async () => {
   lastSyncTime = new Date();
   lastSyncResult = { created, skipped, emailsSent, emailsFailed, errors };
 
+  const Settings = require('../models/Settings');
+  const dbSettings = await Settings.findOne();
+  if (dbSettings) {
+    dbSettings.lastSyncTime = lastSyncTime;
+    dbSettings.lastSyncResult = lastSyncResult;
+    await dbSettings.save();
+  }
+
   console.log(`[GoogleFormSync] Done — Created: ${created}, Skipped: ${skipped}, Emails: ${emailsSent}✓ ${emailsFailed}✗`);
   return { success: true, created, skipped, emailsSent, emailsFailed, errors };
   } finally {
@@ -202,7 +210,11 @@ const startGoogleFormSync = () => {
 
 const getSyncStatus = async () => {
   const configured = await isGoogleConfigured();
-  return { lastSyncTime, lastSyncResult, isConfigured: configured };
+  const Settings = require('../models/Settings');
+  const dbSettings = await Settings.findOne();
+  const syncTime = dbSettings ? dbSettings.lastSyncTime : lastSyncTime;
+  const syncResult = dbSettings ? dbSettings.lastSyncResult : lastSyncResult;
+  return { lastSyncTime: syncTime, lastSyncResult: syncResult, isConfigured: configured };
 };
 
 module.exports = { startGoogleFormSync, processFormResponses, getSyncStatus };

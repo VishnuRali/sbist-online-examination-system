@@ -92,7 +92,7 @@ export default function StudentProfile() {
             </div>
             <div>
               <p className="text-slate-500 text-xs font-medium">Section</p>
-              <p className="text-slate-200 font-semibold mt-0.5">Section {user?.section || '—'}</p>
+              <p className="text-slate-200 font-semibold mt-0.5">{user?.section || '—'}</p>
             </div>
             {user?.academicYear && (
               <div>

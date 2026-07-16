@@ -99,9 +99,8 @@ function EditStudentModal({ student, departments, onClose, onSaved }) {
           ])}
           {field('Section', 'section', 'text', [
             { value: '', label: '— None —' },
-            { value: 'A', label: 'Section A' }, { value: 'B', label: 'Section B' },
-            { value: 'C', label: 'Section C' }, { value: 'D', label: 'Section D' },
-            { value: 'E', label: 'Section E' },
+            { value: 'A', label: 'A' }, { value: 'B', label: 'B' },
+            { value: 'C', label: 'C' },
           ])}
           {field('Roll Number', 'rollNumber')}
           {field('Email', 'email', 'email')}
@@ -217,9 +216,8 @@ function AddStudentModal({ departments, onClose, onSaved, onShowCredentials }) {
           ])}
           {field('Section', 'section', 'text', [
             { value: '', label: '— Select —' },
-            { value: 'A', label: 'Section A' }, { value: 'B', label: 'Section B' },
-            { value: 'C', label: 'Section C' }, { value: 'D', label: 'Section D' },
-            { value: 'E', label: 'Section E' },
+            { value: 'A', label: 'A' }, { value: 'B', label: 'B' },
+            { value: 'C', label: 'C' },
           ])}
           {field('Roll Number', 'rollNumber')}
           {field('Email', 'email', 'email')}
@@ -382,7 +380,7 @@ function BulkActionModal({ action, selectedCount, departments, onConfirm, onClos
             <label className="block text-xs font-medium text-slate-400 mb-1">Select Section</label>
             <select value={value} onChange={e => setValue(e.target.value)} className="input-field">
               <option value="">Choose...</option>
-              {['A','B','C','D','E'].map(s => <option key={s} value={s}>Section {s}</option>)}
+              {['A','B','C'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
         )}
@@ -757,7 +755,7 @@ export default function StudentManager() {
                 <label className="block text-xs text-slate-400 mb-1">Section</label>
                 <select value={filterSection} onChange={e => setFilterSection(e.target.value)} className="input-field text-sm">
                   <option value="">All Sections</option>
-                  {['A','B','C','D','E'].map(s => <option key={s} value={s}>Section {s}</option>)}
+                  {['A','B','C'].map(s => <option key={s} value={s}>{s}</option>)}
                 </select>
               </div>
               <div>
@@ -868,7 +866,7 @@ export default function StudentManager() {
                   <td><span className="font-medium text-slate-200">{s.name}</span><br /><span className="text-[10px] text-slate-500">{s.rollNumber || '—'}</span></td>
                   <td className="text-slate-400 text-sm">{s.department?.code || '—'}</td>
                   <td className="text-slate-400 text-sm">Y{s.year} / S{s.semester}</td>
-                  <td className="text-slate-400 text-sm">{s.section ? `Section ${s.section}` : '—'}</td>
+                  <td className="text-slate-400 text-sm">{s.section ? s.section : '—'}</td>
                   <td className="text-slate-400 text-xs max-w-[140px] truncate" title={s.email}>{s.email}</td>
                   <td>
                     <div className="flex items-center gap-1.5 flex-wrap">

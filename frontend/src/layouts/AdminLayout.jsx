@@ -4,7 +4,7 @@ import { useAuth } from '../context/AuthContext'
 import {
   LayoutDashboard, BookOpen, Users, FileText, Building2,
   BookMarked, LogOut, Menu, X, GraduationCap,
-  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon, Tv, TrendingUp
+  Bell, Shield, Mail, ShieldCheck, Settings as SettingsIcon, Tv, TrendingUp, RefreshCw
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 
@@ -27,6 +27,7 @@ export default function AdminLayout() {
     { to: '/admin/email-logs', label: 'Email Logs', icon: Mail },
     ...(isSuperAdmin ? [
       { to: '/admin/admins', label: 'Admin Management', icon: ShieldCheck },
+      { to: '/admin/google-sync-settings', label: 'Google Sync Settings', icon: RefreshCw },
       { to: '/admin/settings', label: 'Mail Settings', icon: SettingsIcon }
     ] : []),
   ]

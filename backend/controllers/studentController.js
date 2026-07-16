@@ -332,6 +332,7 @@ const startExam = async (req, res) => {
         totalMarks: exam.totalMarks,
         instructions: exam.instructions,
         maxViolations: exam.maxViolations,
+        enableAIProctoring: exam.enableAIProctoring || false,
         endTime: exam.endTime,
       },
       currentSubjectIndex,
@@ -607,7 +608,7 @@ const submitSubjectAndContinue = async (req, res) => {
 
 const reportViolation = async (req, res) => {
   try {
-    const { resultId, violationType } = req.body;
+    const { resultId, violationType, timestamp } = req.body;
 
     const result = await Result.findById(resultId);
     if (!result || result.student.toString() !== req.student._id.toString()) {
@@ -617,15 +618,40 @@ const reportViolation = async (req, res) => {
       return res.status(400).json({ success: false, message: 'Invalid session' });
     }
 
+    const violationDate = timestamp ? new Date(timestamp) : new Date();
+
     result.violations += 1;
-    result.violationDetails.push({ type: violationType, timestamp: new Date() });
+    result.violationDetails.push({ type: violationType, timestamp: violationDate });
     await result.save();
 
+    // Log the event to the clean Violation collection
+    const Violation = require('../models/Violation');
+    const newViolationRecord = new Violation({
+      studentId: req.student._id,
+      examId: result.exam,
+      type: violationType,
+      timestamp: violationDate
+    });
+    await newViolationRecord.save();
+
     const exam = await Exam.findById(result.exam);
-    const maxViolations = exam?.maxViolations || 3;
+    const maxViolations = exam?.enableAIProctoring ? 2 : (exam?.maxViolations || 3);
 
     if (result.violations >= maxViolations) {
-      return submitExamLogic(result, exam, res, 'auto_submitted');
+      // Log an "Auto Submitted" violation event
+      const autoSubViolation = new Violation({
+        studentId: req.student._id,
+        examId: result.exam,
+        type: 'Auto Submitted',
+        timestamp: new Date()
+      });
+      await autoSubViolation.save();
+
+      const reason = exam?.enableAIProctoring
+        ? "Exam automatically submitted due to AI Proctoring violation."
+        : `Max violations reached: ${violationType}`;
+
+      return submitExamLogic(result, exam, res, 'auto_submitted', reason);
     }
 
     res.json({

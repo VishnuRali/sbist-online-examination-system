@@ -130,27 +130,25 @@ const adminRegister = async (req, res) => {
   }
 };
 
-// Student Login — strictly supports studentId only
+// Student Login — supports Student ID or Email
 const studentLogin = async (req, res) => {
   try {
     const { studentId, password } = req.body;
 
     if (!studentId || !password) {
-      return res.status(400).json({ success: false, message: 'Student ID and password are required' });
+      return res.status(400).json({ success: false, message: 'Student ID or Email and password are required' });
     }
 
-    // Allow login using either Student ID or Roll Number
-    const loginId = String(studentId).trim().toUpperCase();
-
+    const loginId = String(studentId).trim();
     const student = await Student.findOne({
       $or: [
-        { studentId: loginId },
-        { rollNumber: loginId }
+        { studentId: loginId.toUpperCase() },
+        { email: loginId.toLowerCase() }
       ]
     }).populate('department', 'name code');
 
     if (!student) {
-      console.warn(`🔑 [Student Login Failed] Student ID "${studentId}" not found.`);
+      console.warn(`🔑 [Student Login Failed] Student identifier "${studentId}" not found.`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
@@ -170,7 +168,7 @@ const studentLogin = async (req, res) => {
 
     const isMatch = await student.comparePassword(password);
     if (!isMatch) {
-      console.warn(`🔑 [Student Login Failed] Incorrect password entered for Student ID "${studentId}".`);
+      console.warn(`🔑 [Student Login Failed] Incorrect password entered for Student identifier "${studentId}".`);
 
       student.loginAttempts = (student.loginAttempts || 0) + 1;
       if (student.loginAttempts >= 5) {

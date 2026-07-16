@@ -413,6 +413,9 @@ const updateStudentProfile = async (req, res) => {
         }
       } else if (field === 'section') {
         newVal = String(newVal).replace(/\s+/g, '').toUpperCase();
+        if (!['A', 'B', 'C'].includes(newVal)) {
+          return res.status(400).json({ success: false, message: 'Invalid section. Allowed values: A, B, or C' });
+        }
         oldVal = student[field];
         if (oldVal !== newVal) {
           changes.push({ field: 'Section', oldValue: oldVal || '—', newValue: newVal, changedBy: adminName, changedByRole: adminRole, changedAt: new Date() });
@@ -625,6 +628,9 @@ const createStudent = async (req, res) => {
     }
     if (!cleanSection) {
       return res.status(400).json({ success: false, message: 'Section is required' });
+    }
+    if (!['A', 'B', 'C'].includes(cleanSection)) {
+      return res.status(400).json({ success: false, message: 'Invalid section. Allowed values: A, B, or C' });
     }
 
     const plainPassword = generatePassword(8);

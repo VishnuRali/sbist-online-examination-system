@@ -103,6 +103,16 @@ router.post('/sync-google-form', adminOnly, async (req, res) => {
   }
 });
 
+router.get('/sync-status', adminOnly, async (req, res) => {
+  try {
+    const { getSyncStatus } = require('../jobs/syncGoogleForm');
+    const result = await getSyncStatus();
+    res.json({ success: true, ...result });
+  } catch (error) {
+    res.status(500).json({ success: false, reason: error.message });
+  }
+});
+
 // ==================== STUDENT PERFORMANCE ANALYTICS ====================
 router.get('/student-performance/summary', adminOnly, getStudentPerformanceSummary);
 router.get('/student-performance/table', adminOnly, getStudentPerformanceTable);

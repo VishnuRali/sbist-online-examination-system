@@ -637,8 +637,8 @@ const importStudentsCSV = async (req, res) => {
         errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: 'Section is missing' });
         continue;
       }
-      if (!/^[A-Z]$/.test(sectionVal)) {
-        errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: `Invalid section value: "${sData.section}"` });
+      if (!/^[A-C]$/.test(sectionVal)) {
+        errors.push({ rollNumber: sData.rollNumber || 'N/A', reason: `Invalid section value: "${sData.section}". Allowed values: A, B, or C.` });
         continue;
       }
 
@@ -818,13 +818,8 @@ const sendManualReminders = async (req, res) => {
 
     const studentQuery = await buildStudentEligibilityQuery(exam, req.body);
 
-    console.log('[DEBUG] Send Reminders Requested filters:', req.body);
-    console.log('[DEBUG] Send Reminders Mongo query:', JSON.stringify(studentQuery, null, 2));
-
+    console.log(`[REMINDERS] Triggering emails for target: ${target}`);
     const students = await Student.find(studentQuery);
-
-    console.log('[DEBUG] Send Reminders Students matched:', students.length);
-    console.log('[DEBUG] Send Reminders Matched student IDs:', students.map(s => s.studentId || s._id));
 
     let sent = 0, failed = 0, skipped = 0;
     const errorsList = [];
@@ -935,14 +930,8 @@ const previewRecipientCount = async (req, res) => {
 
     const studentQuery = await buildStudentEligibilityQuery(exam, req.body);
 
-    console.log('[DEBUG] Recipients Preview Requested filters:', req.body);
-    console.log('[DEBUG] Recipients Preview Mongo query:', JSON.stringify(studentQuery, null, 2));
-
     const matchedStudents = await Student.find(studentQuery).select('_id studentId name').lean();
     const count = matchedStudents.length;
-
-    console.log('[DEBUG] Recipients Preview Students matched:', count);
-    console.log('[DEBUG] Recipients Preview Matched student IDs:', matchedStudents.map(s => s.studentId || s._id));
 
     res.json({ success: true, count });
   } catch (error) {
@@ -1181,6 +1170,23 @@ const getLiveMonitorData = async (req, res) => {
       });
     }
 
+    const Violation = require('../models/Violation');
+    const proctoringViolations = await Violation.find({ examId: { $in: examIds } })
+      .populate('studentId', 'name studentId')
+      .populate('examId', 'title')
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .lean();
+
+    const formattedViolations = proctoringViolations.map(v => ({
+      _id: v._id,
+      studentName: v.studentId?.name || 'N/A',
+      studentId: v.studentId?.studentId || 'N/A',
+      examTitle: v.examId?.title || 'N/A',
+      type: v.type,
+      timestamp: v.timestamp
+    }));
+
     res.json({
       success: true,
       stats: {
@@ -1192,7 +1198,8 @@ const getLiveMonitorData = async (req, res) => {
         absent,
         disqualified
       },
-      students: studentsDetails
+      students: studentsDetails,
+      violations: formattedViolations
     });
   } catch (error) {
     console.error('LIVE MONITOR ERROR:', error);

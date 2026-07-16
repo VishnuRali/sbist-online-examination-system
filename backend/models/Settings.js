@@ -22,6 +22,12 @@ const SettingsSchema = new mongoose.Schema({
     type: String,
     trim: true,
   },
+  lastSyncTime: {
+    type: Date,
+  },
+  lastSyncResult: {
+    type: mongoose.Schema.Types.Mixed,
+  },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Settings', SettingsSchema);

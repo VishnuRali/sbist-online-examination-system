@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useParams, useNavigate, useLocation } from 'react-router-dom'
 import api from '../../utils/api'
 import toast from 'react-hot-toast'
+import AIProctor from '../../components/student/AIProctor'
 import { formatTime } from '../../utils/helpers'
 import {
   Clock, AlertTriangle, ChevronLeft, ChevronRight,
@@ -116,6 +117,7 @@ export default function ExamPage() {
   const [accessCodeInput, setAccessCodeInput] = useState('')
   const [accessCodeError, setAccessCodeError] = useState('')
   const [startingWithCode, setStartingWithCode] = useState(false)
+  const [webcamPermissionGranted, setWebcamPermissionGranted] = useState(null)
 
   const autoSaveRef = useRef(null)
   const timerRef = useRef(null)
@@ -138,7 +140,7 @@ export default function ExamPage() {
     setResultId(result._id)
     setTimeLeft(remainingSeconds)
     setViolations(result.violations || 0)
-    setMaxViolations(exam.maxViolations || 3)
+    setMaxViolations(exam.enableAIProctoring ? 2 : (exam.maxViolations || 3))
     setCurrentSubjectIndex(csi || 0)
     setTotalSubjects(ts || 1)
     setCurrentSubjectName(currentSubject?.subjectName || exam.subjects?.[0]?.subjectName || '')
@@ -442,26 +444,55 @@ export default function ExamPage() {
     return () => clearInterval(autoSaveRef.current)
   }, [resultId, submitted])
 
+  const handlePermissionChange = useCallback((granted) => {
+    setWebcamPermissionGranted(granted)
+  }, [])
+
   // ── Violation handler ─────────────────────────────────────
   const triggerViolation = useCallback(async (type) => {
     // Use the ref (not state) so closures with stale `submitted` still see the latest value
     if (violationLockRef.current || submittedRef.current) return
     violationLockRef.current = true
-    setTimeout(() => { violationLockRef.current = false }, 3000) // debounce
+    setTimeout(() => { violationLockRef.current = false }, 5000) // 5s debounce/cooldown
 
     const newCount = violations + 1
     setViolations(newCount)
     setViolationMsg(type)
-    setShowViolationWarning(true)
+
+    const isProctored = examData?.enableAIProctoring
+    if (!isProctored || newCount < 2) {
+      setShowViolationWarning(true)
+    }
+
+    // Local check to immediately auto-submit even when offline
+    if (newCount >= maxViolations) {
+      toast.error('Maximum violations reached. Exam auto-submitted.')
+      const reason = isProctored
+        ? 'Exam automatically submitted due to AI Proctoring violation.'
+        : 'Prohibited exam activity detected'
+      handleAutoSubmit(reason)
+
+      // Queue locally so the database still logs this event when synced
+      const QUEUE_KEY = `offline-violations-${resultId}`;
+      const queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+      queue.push({ resultId, violationType: type, timestamp: new Date().toISOString() });
+      localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
+      return;
+    }
 
     try {
-      const res = await api.post('/student/exams/violation', { resultId, violationType: type })
-      if (res.data.violations >= res.data.maxViolations) {
-        toast.error('Maximum violations reached. Exam auto-submitted.')
-        handleAutoSubmit()
+      await api.post('/student/exams/violation', { resultId, violationType: type })
+    } catch (err) {
+      // If network is offline, queue violation event in local storage
+      const isNetworkError = !err.response || err.response.status >= 500;
+      if (isNetworkError) {
+        const QUEUE_KEY = `offline-violations-${resultId}`;
+        const queue = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+        queue.push({ resultId, violationType: type, timestamp: new Date().toISOString() });
+        localStorage.setItem(QUEUE_KEY, JSON.stringify(queue));
       }
-    } catch { }
-  }, [violations, resultId])
+    }
+  }, [violations, resultId, examData, maxViolations])
 
 
 
@@ -626,6 +657,37 @@ export default function ExamPage() {
       </div>
     </div>
   )
+
+  // Webcam access block dialog
+  if (examData?.enableAIProctoring && webcamPermissionGranted === false) {
+    return (
+      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-950">
+        <div className="glass-card w-full max-w-md p-8 text-center border-red-500/30 slide-up">
+          <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500 border border-red-500/20">
+            <EyeOff size={32} />
+          </div>
+          <h2 className="text-xl font-bold text-slate-100 font-['Outfit'] mb-3">Camera Access Required</h2>
+          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+            This exam requires webcam access. Please allow camera permission to continue.
+          </p>
+          <div className="flex flex-col gap-3">
+            <button
+              onClick={() => window.location.reload()}
+              className="btn-primary w-full flex items-center justify-center gap-2 cursor-pointer"
+            >
+              Retry Camera Access
+            </button>
+            <button
+              onClick={() => navigate('/student/dashboard')}
+              className="btn-secondary w-full cursor-pointer"
+            >
+              Back to Dashboard
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
 
   if (needsAccessCode) {
     return (
@@ -976,14 +1038,27 @@ export default function ExamPage() {
               </div>
               <div>
                 <h2 className="text-lg font-bold text-red-400">Violation Detected!</h2>
-                <p className="text-slate-400 text-sm">{violationMsg}</p>
+                {examData?.enableAIProctoring ? (
+                  <p className="text-slate-200 text-sm font-semibold mt-1">
+                    Warning! Please keep looking at the screen. One more violation will automatically submit your exam.
+                  </p>
+                ) : (
+                  <p className="text-slate-400 text-sm">{violationMsg}</p>
+                )}
+                {examData?.enableAIProctoring && (
+                  <p className="text-slate-500 text-[10px] mt-1">Activity: {violationMsg}</p>
+                )}
               </div>
             </div>
 
             <div className="p-4 bg-red-500/10 border border-red-500/20 rounded-xl mb-4">
-              <p className="text-red-300 text-sm font-medium">Warning {violations}/{maxViolations}</p>
+              <p className="text-red-300 text-sm font-medium">
+                {examData?.enableAIProctoring ? `Warning ${violations}/1` : `Warning ${violations}/${maxViolations}`}
+              </p>
               <p className="text-slate-400 text-xs mt-1">
-                {maxViolations - violations} warning{maxViolations - violations !== 1 ? 's' : ''} remaining before auto-submission.
+                {examData?.enableAIProctoring
+                  ? "One more violation will automatically submit your exam."
+                  : `${maxViolations - violations} warning${maxViolations - violations !== 1 ? 's' : ''} remaining before auto-submission.`}
               </p>
             </div>
 
@@ -1004,6 +1079,14 @@ export default function ExamPage() {
             </button>
           </div>
         </div>
+      )}
+      {/* ── AI Proctoring Component ────────────────────────────── */}
+      {examData?.enableAIProctoring && (
+        <AIProctor
+          resultId={resultId}
+          onViolation={triggerViolation}
+          onPermissionChange={handlePermissionChange}
+        />
       )}
     </div>
   )

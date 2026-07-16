@@ -394,7 +394,7 @@ export default function StudentPerformance() {
               className="input-field text-xs h-9 py-1 px-2.5"
             >
               <option value="">All Sections</option>
-              {['A', 'B', 'C', 'D', 'E'].map(s => <option key={s} value={s}>Section {s}</option>)}
+              {['A', 'B', 'C'].map(s => <option key={s} value={s}>{s}</option>)}
             </select>
           </div>
 
@@ -582,7 +582,7 @@ export default function StudentPerformance() {
                       <td className="py-3 px-4 font-mono">{r.student?.rollNumber || '—'}</td>
                       <td className="py-3 px-4 font-semibold text-slate-200">{r.student?.name || '—'}</td>
                       <td className="py-3 px-4 text-slate-400">
-                        {r.student?.department?.code || '—'} · Y{r.student?.year || '—'} · S{r.student?.semester || '—'} · Sec {r.student?.section || '—'}
+                        {r.student?.department?.code || '—'} · Y{r.student?.year || '—'} · S{r.student?.semester || '—'} · {r.student?.section || '—'}
                       </td>
                       <td className="py-3 px-4 truncate max-w-[150px] font-medium" title={r.exam?.title}>{r.exam?.title || '—'}</td>
                       <td className="py-3 px-4 text-center font-mono font-semibold">

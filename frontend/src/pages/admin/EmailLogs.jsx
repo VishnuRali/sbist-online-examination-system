@@ -538,7 +538,7 @@ export default function EmailLogs() {
               <label className="block text-[10px] font-semibold text-slate-400 mb-1">Section</label>
               <select className="input-field text-xs py-1.5" value={filterSection} onChange={e => { setFilterSection(e.target.value); setPage(1) }}>
                 <option value="">All</option>
-                {['A','B','C','D','E'].map(s => <option key={s} value={s}>Sec {s}</option>)}
+                 {['A','B','C'].map(s => <option key={s} value={s}>{s}</option>)}
               </select>
             </div>
             <div>
@@ -616,7 +616,7 @@ export default function EmailLogs() {
                     </td>
                     <td className="text-xs text-slate-400 font-medium">
                       {log.year ? `Year ${log.year}` : '—'} • {log.semester ? `Sem ${log.semester}` : '—'}
-                      {log.section ? ` • Sec ${log.section}` : ''}
+                      {log.section ? ` • ${log.section}` : ''}
                     </td>
                     <td>
                       <span className={`badge ${TYPE_COLORS[log.type] || 'badge-gray'}`}>
@@ -834,9 +834,12 @@ export default function EmailLogs() {
                           className="input-field py-1.5 px-3 pr-8 text-xs appearance-none"
                         >
                           <option value="">All Sections</option>
-                          <option value="A">Section A</option>
-                          <option value="B">Section B</option>
-                          <option value="C">Section C</option>
+                          <option value="A">A</option>
+                          <option value="B">B</option>
+                          <option value="C">C</option>
+                          <option value="D">D</option>
+                          <option value="E">E</option>
+                          <option value="F">F</option>
                         </select>
                         <ChevronDown size={12} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
                       </div>
