@@ -1057,105 +1057,263 @@ const exportResultsCSV = async (req, res) => {
 
 // ==================== PDF EXPORT ====================
 
+/**
+ * Helper: draw a single text cell clipped to its column width.
+ * Prevents PDFKit from auto-wrapping text onto the next line (which can
+ * push content past the page boundary and trigger an internal page break
+ * before our explicit y-check fires — the root cause of single-row pages).
+ */
+function drawCell(doc, text, x, y, width, fontSize, color, font) {
+  doc.save();
+  // Clip to the cell rectangle so text never bleeds into the next column
+  doc.rect(x, y, width, 16).clip();
+  doc.fillColor(color).font(font).fontSize(fontSize)
+    .text(String(text ?? ''), x, y, { width, lineBreak: false, ellipsis: true });
+  doc.restore();
+}
+
+/**
+ * Draw table column headings (used on both page 1 and continuation pages).
+ */
+function drawTableHeaders(doc, headers, cols, y) {
+  const tableWidth = doc.page.width - 60;
+  doc.rect(30, y, tableWidth, 18).fill('#1e40af');
+  let x = 32;
+  headers.forEach((h, i) => {
+    drawCell(doc, h, x, y + 4, cols[i] - 2, 6.5, 'white', 'Helvetica-Bold');
+    x += cols[i];
+  });
+  return y + 18;
+}
+
+/**
+ * Draw a compact continuation header (shown on pages 2+).
+ * Returns the new y position after the header.
+ */
+function drawContinuationHeader(doc, exam, isMulti, subjectLabel) {
+  const w = doc.page.width;
+  // Compact navy bar
+  doc.rect(0, 0, w, 30).fill('#1e3a8a');
+  doc.fillColor('white').font('Helvetica-Bold').fontSize(9)
+    .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 30, 6, { align: 'center', width: w - 60 });
+  doc.fillColor('#93c5fd').font('Helvetica').fontSize(7.5)
+    .text(`Result Report  |  ${exam?.title || 'Exam'}  |  ${subjectLabel}`, 30, 18, { align: 'center', width: w - 60 });
+  return 30; // y after header
+}
+
+/**
+ * Draw Page X of Y footer on every page.
+ */
+function drawFooters(doc, totalPages) {
+  const pages = doc.bufferedPageRange();
+  for (let i = 0; i < pages.count; i++) {
+    doc.switchToPage(pages.start + i);
+    const w = doc.page.width;
+    const h = doc.page.height;
+    // Thin footer line
+    doc.moveTo(30, h - 22).lineTo(w - 30, h - 22).lineWidth(0.5).strokeColor('#cbd5e1').stroke();
+    doc.fillColor('#64748b').font('Helvetica').fontSize(7.5)
+      .text(
+        `Page ${i + 1} of ${totalPages}`,
+        30, h - 16, { align: 'left', width: 120 }
+      )
+      .text(
+        'SBIST Online Examination System',
+        30, h - 16, { align: 'right', width: w - 60 }
+      );
+  }
+}
+
 const exportResultsPDF = async (req, res) => {
   try {
     const results = await computeResultsList(req.params.examId, req.query);
     const exam = results[0]?.exam;
     const isMulti = exam?.examType === 'multi' && exam?.subjects?.length > 0;
-    const doc = new PDFDocument({ margin: 30, size: 'A4', layout: 'landscape' });
+
+    // Buffer page range so we can go back and write footers after all pages are done
+    const doc = new PDFDocument({
+      margin: 30,
+      size: 'A4',
+      layout: 'landscape',
+      bufferPages: true,  // CRITICAL: lets us switch back to earlier pages for footers
+      autoFirstPage: true,
+    });
+
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename=results_${req.params.examId}.pdf`);
     doc.pipe(res);
 
-    // Header
-    doc.rect(0, 0, doc.page.width, 80).fill('#1e3a8a');
-    doc.fillColor('white').fontSize(16).font('Helvetica-Bold')
-      .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY', 30, 18, { align: 'center' });
+    // ── Page layout constants ──────────────────────────────────────────────
+    const PAGE_MARGIN_LEFT  = 30;
+    const PAGE_MARGIN_RIGHT = 30;
+    const TABLE_LEFT        = PAGE_MARGIN_LEFT;
+    const CELL_PAD_X        = 2;
+    const ROW_H             = 16;   // row height in points
+    const HDR_H             = 18;   // header row height
+    const FOOTER_RESERVE    = 28;   // keep bottom clear for footer
+    const CONT_HDR_H        = 30;   // continuation header height (pages 2+)
+    const CONT_HDR_GAP      = 6;    // gap between continuation header and column headings
+
+    // Table column widths (single-subject layout)
+    const cols = isMulti
+      ? [20, 45, 80, 45, 55, 35, 35, 35, ...exam.subjects.map(() => [32, 28]).flat(), 32, 30, 28, 22, 38]
+      : [22, 50, 88, 50, 70, 28, 28, 28, 95, 35, 35, 30, 28, 45];
+
+    const headers = isMulti
+      ? ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Yr', 'Sem', 'Sec',
+          ...exam.subjects.map(s => [`${s.slice(0, 5)}`, 'St']).flat(),
+          'Total', 'Marks', '%', 'Grd', 'Status']
+      : ['Rank', 'Std ID', 'Name', 'Roll No', 'Department', 'Yr', 'Sem', 'Sec',
+          'Subject', 'Total', 'Marks', '%', 'Grade', 'Status'];
+
     const subjectLabel = isMulti
       ? `Subjects: ${exam.subjects.join(', ')}`
       : `Subject: ${exam?.subject?.name || '—'}`;
-    doc.fontSize(11).font('Helvetica')
-      .text(`Result Report: ${exam?.title || 'Exam'} | ${subjectLabel} | Generated: ${formatDateTime(new Date())}`, 30, 44, { align: 'center' });
+
+    const tableWidth = doc.page.width - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT;
+
+    // ── Summary stats ─────────────────────────────────────────────────────
+    const total        = results.length;
+    const submittedArr = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status));
+    const submittedCount = submittedArr.length;
+    const passed       = submittedArr.filter(r => r.isPassed).length;
+    const failed       = submittedCount - passed;
+    const avgPct       = submittedCount > 0
+      ? (submittedArr.reduce((s, r) => s + (r.percentage || 0), 0) / submittedCount).toFixed(1)
+      : '0.0';
+
+    // ── PAGE 1: Full banner header ────────────────────────────────────────
+    // Deep navy title banner
+    doc.rect(0, 0, doc.page.width, 72).fill('#1e3a8a');
+
+    // College name
+    doc.fillColor('white').font('Helvetica-Bold').fontSize(15)
+      .text('SWARNA BHARATHI INSTITUTE OF SCIENCE AND TECHNOLOGY',
+            PAGE_MARGIN_LEFT, 12,
+            { align: 'center', width: doc.page.width - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT });
+
+    // Report subtitle
+    doc.fillColor('#bfdbfe').font('Helvetica-Bold').fontSize(10)
+      .text('Result Report',
+            PAGE_MARGIN_LEFT, 34,
+            { align: 'center', width: doc.page.width - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT });
+
+    // Exam name / subject / generated timestamp
+    const genDateStr = formatDateTime(new Date());
+    doc.fillColor('#93c5fd').font('Helvetica').fontSize(8.5)
+      .text(`${exam?.title || 'Exam'}  ·  ${subjectLabel}  ·  Generated: ${genDateStr}`,
+            PAGE_MARGIN_LEFT, 50,
+            { align: 'center', width: doc.page.width - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT });
 
     // Stats bar
-    const total = results.length;
-    const submittedCount = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status)).length;
-    const passed = results.filter(r => ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) && r.isPassed).length;
-    const avgPct = submittedCount > 0 ? (results.reduce((s, r) => s + (['Completed', 'Submitted', 'Auto Submitted'].includes(r.status) ? (r.percentage || 0) : 0), 0) / submittedCount).toFixed(1) : 0;
-    doc.rect(0, 80, doc.page.width, 28).fill('#0f172a');
-    doc.fillColor('#94a3b8').font('Helvetica').fontSize(9)
-      .text(`Total: ${total}   |   Submitted: ${submittedCount}   |   Passed: ${passed}   |   Failed: ${submittedCount - passed}   |   Avg Score: ${avgPct}%`, 30, 89, { align: 'center' });
+    doc.rect(0, 72, doc.page.width, 26).fill('#0f172a');
+    const statsText = `Total Students: ${total}   |   Submitted: ${submittedCount}   |   Passed: ${passed}   |   Failed: ${failed}   |   Average Score: ${avgPct}%`;
+    doc.fillColor('#94a3b8').font('Helvetica').fontSize(8.5)
+      .text(statsText,
+            PAGE_MARGIN_LEFT, 82,
+            { align: 'center', width: doc.page.width - PAGE_MARGIN_LEFT - PAGE_MARGIN_RIGHT });
 
-    // Table Columns
-    const cols = isMulti
-      ? [20, 45, 80, 45, 60, 45, 45, 50, ...exam.subjects.map(() => [35, 30]).flat(), 35, 30, 30, 25, 40]
-      : [25, 50, 90, 50, 70, 50, 50, 60, 100, 35, 35, 30, 30, 50];
-    const headers = isMulti
-      ? ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', ...exam.subjects.map(s => [`${s.slice(0, 5)}`, 'Status']).flat(), 'Total', 'Marks', '%', 'Grd', 'Status']
-      : ['Rank', 'Std ID', 'Name', 'Roll No', 'Dept', 'Year', 'Sem', 'Sec', 'Subject', 'Total', 'Marks', '%', 'Grade', 'Status'];
+    // Column headings (page 1)
+    let y = 98;
+    y = drawTableHeaders(doc, headers, cols, y);
 
-    let y = 120;
-    doc.rect(30, y, doc.page.width - 60, 20).fill('#1e40af');
-    doc.fillColor('white').font('Helvetica-Bold').fontSize(6.5);
-    let x = 32;
-    headers.forEach((h, i) => { doc.text(h, x, y + 6, { width: cols[i] - 2 }); x += cols[i]; });
-    y += 20;
+    // ── DATA ROWS ─────────────────────────────────────────────────────────
+    let pageNum = 1;  // track logical page count for footer
 
     results.forEach((r, idx) => {
-      const rowFill = idx % 2 === 0 ? '#f8fafc' : 'white';
-      doc.rect(30, y, doc.page.width - 60, 18).fill(rowFill);
-      doc.fillColor('#1e293b').font('Helvetica').fontSize(6.5);
-      x = 32;
+      // ── PRE-CHECK: will this row fit on the current page? ─────────────
+      // Check BEFORE drawing — this is the key fix for the single-row-page bug.
+      if (y + ROW_H + FOOTER_RESERVE > doc.page.height) {
+        // Add a new page
+        doc.addPage({ layout: 'landscape', size: 'A4', margin: 30 });
+        pageNum++;
+
+        // Compact continuation header
+        y = drawContinuationHeader(doc, exam, isMulti, subjectLabel);
+        y += CONT_HDR_GAP;
+
+        // Repeat column headings on every continuation page
+        y = drawTableHeaders(doc, headers, cols, y);
+      }
+
+      // Alternating row background
+      const rowFill = idx % 2 === 0 ? '#f1f5f9' : '#ffffff';
+      doc.rect(TABLE_LEFT, y, tableWidth, ROW_H).fill(rowFill);
+
+      // Left border accent on even rows for subtle visual rhythm
+      doc.rect(TABLE_LEFT, y, 2, ROW_H).fill('#c7d2fe');
+
+      // Build cell values
+      const hasTaken  = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
+      const isPassedVal = hasTaken && r.isPassed;
 
       const vals = isMulti
         ? [
-          String(r.rank),
-          r.student?.studentId || '',
-          r.student?.name || '',
-          r.student?.rollNumber || '',
-          r.student?.department?.code || '',
-          String(r.student?.year || ''),
-          String(r.student?.semester || ''),
-          r.student?.section || '',
-          ...exam.subjects.map((s, si) => {
-            const sr = r.subjectResults?.find(x => x.subjectIndex === si);
-            return [sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : '-', sr ? (sr.isPassed ? 'PASS' : 'FAIL') : '-'];
-          }).flat(),
-          String(r.totalMarks),
-          String(r.obtainedMarks),
-          `${(r.percentage || 0).toFixed(1)}%`,
-          r.grade,
-          r.status,
-        ]
+            String(r.rank),
+            r.student?.studentId || '',
+            r.student?.name || '',
+            r.student?.rollNumber || '',
+            r.student?.department?.code || '',
+            String(r.student?.year || ''),
+            String(r.student?.semester || ''),
+            r.student?.section || '',
+            ...exam.subjects.map((s, si) => {
+              const sr = r.subjectResults?.find(x => x.subjectIndex === si);
+              return [sr ? `${sr.obtainedMarks}/${sr.totalMarks}` : '–', sr ? (sr.isPassed ? 'PASS' : 'FAIL') : '–'];
+            }).flat(),
+            String(r.totalMarks),
+            String(r.obtainedMarks),
+            `${(r.percentage || 0).toFixed(1)}%`,
+            r.grade || '–',
+            hasTaken ? (isPassedVal ? 'PASS' : 'FAIL') : (r.status || '–'),
+          ]
         : [
-          String(r.rank),
-          r.student?.studentId || '',
-          r.student?.name || '',
-          r.student?.rollNumber || '',
-          r.student?.department?.code || '',
-          String(r.student?.year || ''),
-          String(r.student?.semester || ''),
-          r.student?.section || '',
-          r.exam?.subject?.name || '',
-          String(r.totalMarks),
-          String(r.obtainedMarks),
-          `${(r.percentage || 0).toFixed(1)}%`,
-          r.grade,
-          r.status,
-        ];
+            String(r.rank),
+            r.student?.studentId || '',
+            r.student?.name || '',
+            r.student?.rollNumber || '',
+            r.student?.department?.name || r.student?.department?.code || '',
+            String(r.student?.year || ''),
+            String(r.student?.semester || ''),
+            r.student?.section || '',
+            r.exam?.subject?.name || '',
+            String(r.totalMarks),
+            String(r.obtainedMarks),
+            `${(r.percentage || 0).toFixed(1)}%`,
+            r.grade || '–',
+            hasTaken ? (isPassedVal ? 'PASS' : 'FAIL') : (r.status || '–'),
+          ];
 
+      // Draw each cell — always with lineBreak:false + ellipsis to prevent auto page breaks
+      let x = TABLE_LEFT + CELL_PAD_X;
       vals.forEach((v, i) => {
         const isStatusCol = i === vals.length - 1;
-        const hasTaken = ['Completed', 'Submitted', 'Auto Submitted'].includes(r.status);
-        const isPassedVal = hasTaken && r.isPassed;
-        doc.fillColor(isStatusCol ? (isPassedVal ? '#15803d' : (hasTaken ? '#b91c1c' : '#64748b')) : '#1e293b')
-          .text(v, x, y + 5, { width: cols[i] - 2 });
+        const isGradeCol  = i === vals.length - 2;
+        let color = '#1e293b';
+        if (isStatusCol) {
+          color = isPassedVal ? '#15803d' : (hasTaken ? '#b91c1c' : '#64748b');
+        } else if (isGradeCol) {
+          // Grade: A+/A green, B+/B blue, C yellow-ish, F red
+          const g = String(v);
+          color = g.startsWith('A') ? '#166534' : g.startsWith('B') ? '#1d4ed8' : g === 'F' ? '#b91c1c' : '#92400e';
+        }
+        const font = (isStatusCol) ? 'Helvetica-Bold' : 'Helvetica';
+        drawCell(doc, v, x, y + 3, cols[i] - CELL_PAD_X, 6.5, color, font);
         x += cols[i];
       });
 
-      y += 18;
-      if (y > doc.page.height - 60) { doc.addPage({ layout: 'landscape' }); y = 40; }
+      // Thin bottom border on each row
+      doc.moveTo(TABLE_LEFT, y + ROW_H)
+         .lineTo(TABLE_LEFT + tableWidth, y + ROW_H)
+         .lineWidth(0.3)
+         .strokeColor('#e2e8f0')
+         .stroke();
+
+      y += ROW_H;
     });
+
+    // ── FOOTERS: go back and stamp every page ─────────────────────────────
+    drawFooters(doc, pageNum);
 
     doc.end();
   } catch (error) {
