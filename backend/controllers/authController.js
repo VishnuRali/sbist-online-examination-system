@@ -140,9 +140,6 @@ const studentLogin = async (req, res) => {
     }
 
     const loginId = String(studentId).trim();
-    console.log(`🔑 [studentLogin] Attempting login for identifier: "${loginId}"`);
-    console.log(`🔑 [studentLogin] Password entered length: ${password?.length}`);
-
     const students = await Student.find({
       $or: [
         { studentId: loginId.toUpperCase() },
@@ -150,10 +147,7 @@ const studentLogin = async (req, res) => {
       ]
     }).populate('department', 'name code');
 
-    console.log(`🔑 [studentLogin] Found ${students?.length} matching student document(s).`);
-
     if (!students || students.length === 0) {
-      console.warn(`🔑 [Student Login Failed] Student identifier "${studentId}" not found.`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
@@ -172,9 +166,7 @@ const studentLogin = async (req, res) => {
 
     for (let i = 0; i < students.length; i++) {
       const student = students[i];
-      console.log(`🔑 [studentLogin] Testing candidate ${i+1}: _id=${student._id}, studentId=${student.studentId}, DB hash=${student.password}`);
       const isMatch = await student.comparePassword(password);
-      console.log(`🔑 [studentLogin] Candidate ${i+1} compare result for password length ${password?.length}: ${isMatch}`);
       if (isMatch) {
         matchedStudent = student;
         matchFound = true;
@@ -183,7 +175,6 @@ const studentLogin = async (req, res) => {
     }
 
     if (!matchFound) {
-      console.warn(`🔑 [Student Login Failed] Incorrect password entered for Student identifier "${studentId}".`);
       const targetStudent = students[0];
       targetStudent.loginAttempts = (targetStudent.loginAttempts || 0) + 1;
       if (targetStudent.loginAttempts >= 5) {
@@ -278,9 +269,6 @@ const getMe = async (req, res) => {
 const studentForceChangePassword = async (req, res) => {
   try {
     const { currentPassword, newPassword, confirmPassword } = req.body;
-    console.log(`🔐 [studentForceChangePassword] Request body keys:`, Object.keys(req.body));
-    console.log(`🔐 [studentForceChangePassword] Current password length: ${currentPassword?.length}, New password length: ${newPassword?.length}`);
-    console.log(`🔐 [studentForceChangePassword] For Student ObjectId: ${req.user?.id}`);
 
     if (!currentPassword || !newPassword || !confirmPassword) {
       return res.status(400).json({ success: false, message: 'All password fields are required' });
@@ -294,40 +282,28 @@ const studentForceChangePassword = async (req, res) => {
 
     const student = await Student.findById(req.user.id);
     if (!student) {
-      console.warn(`🔐 [studentForceChangePassword] Student not found with ID ${req.user?.id}`);
       return res.status(404).json({ success: false, message: 'Student not found' });
     }
-    console.log(`🔐 [studentForceChangePassword] Student found: ${student.studentId}. DB password hash: ${student.password}`);
 
     const isMatch = await bcrypt.compare(currentPassword, student.password);
-    console.log(`🔐 [studentForceChangePassword] Compare currentPassword with DB hash result: ${isMatch}`);
     if (!isMatch) {
       return res.status(400).json({ success: false, message: 'Incorrect current password' });
     }
 
     // Generate a fresh sessionId so the new token is consistent with the session model
     const sessionId = crypto.randomUUID();
-    console.log(`🔐 [studentForceChangePassword] Assigning newPassword to student.password`);
     student.password = newPassword; // pre-save hook hashes this
     student.isPasswordChanged = true;
     student.currentSessionId = sessionId;
 
-    console.log(`🔐 [studentForceChangePassword] Calling student.save()...`);
     await student.save();
-    console.log(`🔐 [studentForceChangePassword] student.save() completed. Current student.password: ${student.password}`);
 
     // Verification check immediately after saving
     const isHashOk = await bcrypt.compare(newPassword, student.password);
-    console.log(`🔐 [studentForceChangePassword] Immediate post-save verification (newPassword vs student.password): ${isHashOk}`);
     if (!isHashOk) {
       console.error(`❌ [Security Alert] Password hash verification failed immediately after save for student ${student.studentId}`);
       return res.status(500).json({ success: false, message: 'Password hashing verification failed. Please try again.' });
     }
-
-    // Reload from DB to verify persistence
-    const reloaded = await Student.findById(student._id);
-    const isPersistedHashOk = await bcrypt.compare(newPassword, reloaded.password);
-    console.log(`🔐 [studentForceChangePassword] Reloaded student. password hash: ${reloaded.password}, verification check: ${isPersistedHashOk}`);
 
     const token = generateToken({
       id: student._id,

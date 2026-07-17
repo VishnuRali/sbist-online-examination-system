@@ -13,7 +13,6 @@ export default function ForcePasswordChange() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    console.log('🔐 [ForcePasswordChange] Submit password change', { currentUser: user?.studentId, isPasswordChanged: user?.isPasswordChanged })
     if (form.newPassword !== form.confirmPassword) {
       return toast.error('New passwords do not match')
     }
@@ -24,7 +23,6 @@ export default function ForcePasswordChange() {
     setLoading(true)
     try {
       const res = await api.post('/auth/student/force-change-password', form)
-      console.log('🔐 [ForcePasswordChange] Password change response', { success: res.data.success, redirectTo: res.data.redirectTo })
       toast.success('Password updated successfully! Welcome to your dashboard.')
       
       // Update token and user from server response for a clean session
@@ -37,7 +35,6 @@ export default function ForcePasswordChange() {
       const redirectTo = res.data.redirectTo || '/student/dashboard'
       navigate(redirectTo, { replace: true })
     } catch (err) {
-      console.log('🔐 [ForcePasswordChange] Password change failed', { message: err.response?.data?.message, status: err.response?.status })
       toast.error(err.response?.data?.message || 'Failed to update password')
     } finally {
       setLoading(false)

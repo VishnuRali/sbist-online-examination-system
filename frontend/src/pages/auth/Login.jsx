@@ -17,7 +17,6 @@ export default function Login() {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    console.log('🔐 [Login] Submit login', { mode, studentId: form.identifier })
     setLoading(true)
     try {
       let endpoint, payload
@@ -30,7 +29,6 @@ export default function Login() {
         payload = { studentId: form.identifier, password: form.password }
       }
 
-      console.log('🔐 [Login] Sending login request', { endpoint, payload })
       const res = await api.post(endpoint, payload)
       console.log('🔐 [Login] Login success', {
         role: mode,
@@ -41,7 +39,6 @@ export default function Login() {
       toast.success(`Welcome, ${res.data.user.name}!`)
       navigate(mode === 'admin' ? '/admin' : '/student', { replace: true })
     } catch (err) {
-      console.log('🔐 [Login] Login failed', { message: err.response?.data?.message, status: err.response?.status })
       toast.error(err.response?.data?.message || 'Login failed. Please try again.')
     } finally {
       setLoading(false)
