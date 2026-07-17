@@ -64,6 +64,7 @@ const processFormResponses = async () => {
         const existingByRoll = await Student.findOne({ rollNumber: response.rollNumber });
         if (existingByRoll) {
           skipped++;
+          await markRowAsSynced(response.rowIndex, response.syncColLetter || syncColLetter || 'K');
           continue;
         }
       }

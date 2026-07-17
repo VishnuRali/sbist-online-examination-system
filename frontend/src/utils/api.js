@@ -59,11 +59,18 @@ api.interceptors.response.use(
     // then ProtectedRoute redirects via React Router <Navigate>.
     const isAuthRoute = url.includes('/auth/')
     if (isAuthRoute && (status === 401 || status === 403)) {
-      console.warn('[API] Auth route returned', status, '— dispatching auth-logout')
-      localStorage.removeItem('token')
-      sessionStorage.removeItem('token')
-      window.dispatchEvent(new CustomEvent('auth-logout'))
-      // Do NOT call window.location.href here — React Router handles navigation.
+      const authHeader = error.config?.headers?.Authorization || ''
+      const sentToken = authHeader.replace('Bearer ', '').trim()
+      const currentToken = (localStorage.getItem('token') || '').trim()
+
+      if (sentToken && sentToken === currentToken) {
+        console.warn('[API] Current auth session rejected by server — dispatching auth-logout')
+        localStorage.removeItem('token')
+        sessionStorage.removeItem('token')
+        window.dispatchEvent(new CustomEvent('auth-logout'))
+      } else {
+        console.log('[API] Stale auth request rejected — ignoring logout dispatch')
+      }
     }
 
     return Promise.reject(error)

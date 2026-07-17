@@ -26,12 +26,18 @@ export const AuthProvider = ({ children }) => {
       const res = await api.get('/auth/me', {
         headers: { Authorization: `Bearer ${tkn}` }
       })
+      if (localStorage.getItem('token') !== tkn) {
+        console.log('⚠️ [AuthContext] Stale /auth/me fetch completed — ignoring')
+        return
+      }
       const role = res.data.user?.role || res.data.role
       setUser({ ...res.data.user, role })
     } catch (error) {
+      if (localStorage.getItem('token') !== tkn) {
+        console.log('⚠️ [AuthContext] Stale /auth/me fetch failed — ignoring')
+        return
+      }
       // Only clear auth state for definitive auth rejections (401/403).
-      // A 500 server error or a network timeout should NOT log the user out —
-      // it's a temporary server issue, not an invalid token.
       const status = error?.response?.status
       if (status === 401 || status === 403) {
         console.log('   Token rejected by server (401/403) — clearing auth state')
@@ -40,7 +46,9 @@ export const AuthProvider = ({ children }) => {
         console.warn('   /auth/me error (non-auth):', status || 'network error', '— keeping session alive')
       }
     } finally {
-      setIsLoading(false)
+      if (localStorage.getItem('token') === tkn || !localStorage.getItem('token')) {
+        setIsLoading(false)
+      }
     }
   }, [])
 
