@@ -450,7 +450,7 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
           if (results && results.faceLandmarks) {
             const faces = results.faceLandmarks
 
-            // Rule A: No Face (Absent continuously for > 5s)
+            // Rule A: No Face (Absent continuously for > 8s)
             if (faces.length === 0) {
               headTurnStartTimeRef.current = null
               multipleFacesStartTimeRef.current = null
@@ -459,7 +459,8 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                 noFaceStartTimeRef.current = Date.now()
               } else {
                 const elapsed = Date.now() - noFaceStartTimeRef.current
-                if (elapsed > 5000) {
+                if (elapsed > 8000) {
+                  console.log(`[AIProctor DEV LOG] NO FACE violation recorded. Absent for ${elapsed}ms.`);
                   onViolation("No Face")
                   noFaceStartTimeRef.current = Date.now() // Reset timer
                 }
@@ -571,13 +572,8 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                   }
                 }
               } else {
-                if (!cooldownActive) {
-                  headTurnStartTimeRef.current = null
-                  setShowPrompt(prev => {
-                    if (prev) return false
-                    return prev
-                  })
-                }
+                headTurnStartTimeRef.current = null
+                setShowPrompt(false)
               }
 
               // Update dev live statistics and console log once every 100ms
