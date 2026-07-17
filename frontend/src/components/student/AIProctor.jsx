@@ -7,7 +7,7 @@ const loadMediaPipe = async () => {
   return await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/tasks-vision.js')
 }
 
-export default function AIProctor({ resultId, onViolation, onPermissionChange }) {
+export default function AIProctor({ resultId, onViolation, onPermissionChange, retryTrigger }) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [minimized, setMinimized] = useState(false)
@@ -28,6 +28,7 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange })
   const headTurnStartTimeRef = useRef(null)
   const multipleFacesStartTimeRef = useRef(null)
   const reconnectInProgressRef = useRef(false)
+  const initIdRef = useRef(0)
 
   // Dragging event handlers
   const handleMouseDown = (e) => {
@@ -119,22 +120,62 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange })
     if (reconnectInProgressRef.current) return;
     reconnectInProgressRef.current = true;
 
+    const logDev = (msg, data = null) => {
+      if (import.meta.env.DEV) {
+        if (data) {
+          console.log(`[AIProctor DEV LOG] ${msg}`, data);
+        } else {
+          console.log(`[AIProctor DEV LOG] ${msg}`);
+        }
+      }
+    };
+
+    logDev("reconnectWebcam: starting reconnection procedure.");
+
     if (streamRef.current) {
+      logDev("reconnectWebcam: stopping previous stream.");
       streamRef.current.getTracks().forEach((t) => t.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
     }
 
     let attempts = 0;
     const tryConnect = async () => {
       try {
+        logDev("getUserMedia() called (reconnect attempt " + (attempts + 1) + ")");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { width: 320, height: 240, frameRate: { ideal: 10, max: 15 } }
         });
+        
+        logDev("getUserMedia() success (reconnect)");
+
+        if (!stream || stream.getVideoTracks().length === 0) {
+          logDev("reconnect: stream is empty or has no tracks.");
+          throw new Error("Stream is empty or has no tracks.");
+        }
+
+        const activeTrack = stream.getVideoTracks()[0];
+        logDev("Selected camera device: " + activeTrack.label);
+        logDev("MediaStream active: " + stream.active);
+
         streamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
+          try {
+            await videoRef.current.play();
+            logDev("Webcam video playing (reconnect).");
+          } catch (e) {
+            logDev("reconnect play failed:", e);
+          }
         }
         reconnectInProgressRef.current = false;
       } catch (err) {
+        logDev("getUserMedia() error (reconnect)", err);
+        logDev("Error name: " + err.name);
+        logDev("Error message: " + err.message);
+
         attempts++;
         if (attempts < 5) {
           setTimeout(tryConnect, 3000);
@@ -149,80 +190,177 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange })
 
   // Initialize MediaPipe and Camera
   useEffect(() => {
-    let active = true
+    const currentInitId = ++initIdRef.current;
+    let active = true;
+
+    const logDev = (msg, data = null) => {
+      if (import.meta.env.DEV) {
+        if (data) {
+          console.log(`[AIProctor DEV LOG] ${msg}`, data);
+        } else {
+          console.log(`[AIProctor DEV LOG] ${msg}`);
+        }
+      }
+    };
 
     const init = async () => {
       try {
-        setLoading(true)
-        setError(null)
-        onPermissionChange(null)
+        setLoading(true);
+        setError(null);
+        onPermissionChange(null);
 
-        const mp = await loadMediaPipe()
-        const vision = await mp.FilesetResolver.forVisionTasks(
-          "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
-        )
-
-        let landmarker;
-        try {
-          // Attempt GPU WebGL accelerated mode first
-          landmarker = await mp.FaceLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-              delegate: "GPU"
-            },
-            runningMode: "VIDEO",
-            numFaces: 2
-          });
-        } catch (gpuErr) {
-          console.warn("MediaPipe GPU initialization failed. Falling back to CPU.", gpuErr);
-          // Graceful fallback to CPU delegate
-          landmarker = await mp.FaceLandmarker.createFromOptions(vision, {
-            baseOptions: {
-              modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-              delegate: "CPU"
-            },
-            runningMode: "VIDEO",
-            numFaces: 2
-          });
+        // 1. Check Permissions API first
+        let permissionState = 'prompt';
+        if (navigator.permissions && typeof navigator.permissions.query === 'function') {
+          try {
+            const permissionStatus = await navigator.permissions.query({ name: 'camera' });
+            permissionState = permissionStatus.state;
+            logDev("Permission status: " + permissionState);
+          } catch (e) {
+            logDev("Permissions query failed, falling back to prompt:", e);
+          }
         }
 
-        if (!active) return
-        landmarkerRef.current = landmarker
-
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 320, height: 240, frameRate: { ideal: 10, max: 15 } }
-        })
-
-        if (!active) {
-          stream.getTracks().forEach((track) => track.stop())
-          return
+        // If permission is already denied, skip getUserMedia and fail immediately
+        if (permissionState === 'denied') {
+          logDev("Camera permission is denied by browser. Showing dialog.");
+          if (currentInitId === initIdRef.current) {
+            setError("Camera permission denied. Please allow camera access in your browser settings.");
+            setLoading(false);
+            onPermissionChange(false);
+          }
+          return;
         }
 
-        streamRef.current = stream
+        // 2. Cleanup any previous stream before requesting a new one
+        if (streamRef.current) {
+          logDev("Stopping previous stream before requesting getUserMedia.");
+          streamRef.current.getTracks().forEach((track) => track.stop());
+          streamRef.current = null;
+        }
         if (videoRef.current) {
-          videoRef.current.srcObject = stream
+          videoRef.current.srcObject = null;
         }
 
-        setLoading(false)
-        onPermissionChange(true)
-      } catch (err) {
-        console.error("AI Proctor init error:", err)
-        setError("Camera permission denied or model loading failed.")
-        setLoading(false)
-        onPermissionChange(false)
-      }
-    }
+        // 3. Request camera stream (resolves 'prompt' -> 'granted' or throws error)
+        logDev("getUserMedia() called");
+        let stream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 320, height: 240, frameRate: { ideal: 10, max: 15 } }
+          });
+          logDev("getUserMedia() success");
+        } catch (err) {
+          logDev("getUserMedia() error", err);
+          logDev("Error name: " + (err.name || "Unknown"));
+          logDev("Error message: " + (err.message || "No message"));
+          throw err;
+        }
 
-    init()
+        if (currentInitId !== initIdRef.current) {
+          logDev("A newer initialization is in progress. Aborting current initialization.");
+          if (stream) {
+            stream.getTracks().forEach((track) => track.stop());
+          }
+          return;
+        }
+
+        if (!stream || stream.getVideoTracks().length === 0) {
+          logDev("getUserMedia succeeded but stream is null or empty.");
+          throw new Error("Stream is null or has no video tracks.");
+        }
+
+        const activeTrack = stream.getVideoTracks()[0];
+        logDev("Selected camera device: " + activeTrack.label);
+        logDev("MediaStream active: " + stream.active);
+
+        streamRef.current = stream;
+
+        // Bind stream immediately to video ref since it's rendered unconditionally now
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          try {
+            await videoRef.current.play();
+            logDev("Webcam video playing.");
+          } catch (playErr) {
+            logDev("Video element play was interrupted or failed:", playErr);
+          }
+        }
+
+        // Call onPermissionChange(true) IMMEDIATELY after stream is active, before model loading
+        logDev("Camera is ready. Letting student continue into the exam.");
+        onPermissionChange(true);
+
+        // 4. Initialize MediaPipe Face Landmarker if not already initialized
+        if (!landmarkerRef.current) {
+          logDev("Loading MediaPipe tasks-vision and models...");
+          const mp = await loadMediaPipe();
+          const vision = await mp.FilesetResolver.forVisionTasks(
+            "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/wasm"
+          );
+
+          let landmarker;
+          try {
+            // Attempt GPU WebGL accelerated mode first
+            landmarker = await mp.FaceLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                delegate: "GPU"
+              },
+              runningMode: "VIDEO",
+              numFaces: 2
+            });
+            logDev("FaceLandmarker initialized on GPU.");
+          } catch (gpuErr) {
+            logDev("FaceLandmarker GPU init failed. Falling back to CPU.", gpuErr);
+            landmarker = await mp.FaceLandmarker.createFromOptions(vision, {
+              baseOptions: {
+                modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+                delegate: "CPU"
+              },
+              runningMode: "VIDEO",
+              numFaces: 2
+            });
+            logDev("FaceLandmarker initialized on CPU.");
+          }
+
+          if (currentInitId !== initIdRef.current) {
+            logDev("A newer initialization is in progress. Cleaning up stream and aborting.");
+            stream.getTracks().forEach((track) => track.stop());
+            return;
+          }
+
+          landmarkerRef.current = landmarker;
+        }
+
+        logDev("AI Proctor initialized");
+        setLoading(false);
+      } catch (err) {
+        logDev("AI Proctor initialization caught error:", err);
+        logDev("Error name: " + (err.name || "Unknown"));
+        logDev("Error message: " + (err.message || "No message"));
+        if (currentInitId === initIdRef.current) {
+          setError(err.message || "Camera permission denied or model loading failed.");
+          setLoading(false);
+          onPermissionChange(false);
+        }
+      }
+    };
+
+    init();
 
     return () => {
-      active = false
+      active = false;
+      logDev("Cleaning up active stream tracks on effect cleanup.");
       if (streamRef.current) {
-        streamRef.current.getTracks().forEach((track) => track.stop())
-        streamRef.current = null
+        streamRef.current.getTracks().forEach((track) => track.stop());
+        streamRef.current = null;
       }
-    }
-  }, [onPermissionChange])
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [onPermissionChange, retryTrigger])
 
   // Core frame-processing animation loop
   useEffect(() => {
@@ -393,20 +531,19 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange })
           </div>
 
           <div className="relative aspect-video w-full bg-slate-900 flex items-center justify-center overflow-hidden">
-            {loading ? (
-              <div className="text-center p-4">
+            {loading && (
+              <div className="absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center text-center p-4 z-10">
                 <div className="spinner !w-6 !h-6 mb-2 mx-auto" />
                 <p className="text-[9px] text-slate-400">Loading AI Proctor...</p>
               </div>
-            ) : (
-              <video
-                ref={videoRef}
-                autoPlay
-                playsInline
-                muted
-                className="w-full h-full object-cover scale-x-[-1]"
-              />
             )}
+            <video
+              ref={videoRef}
+              autoPlay
+              playsInline
+              muted
+              className="w-full h-full object-cover scale-x-[-1]"
+            />
           </div>
         </div>
       )}

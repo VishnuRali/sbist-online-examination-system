@@ -28,7 +28,8 @@ const {
   exportFailedEmailLogs,
   previewRecipientCount,
   getLiveMonitorData,
-  getEmailQueueProgress
+  getEmailQueueProgress,
+  cleanupEmailLogs
 } = require('../controllers/adminManagementController');
 
 const {
@@ -82,6 +83,7 @@ router.get('/email-logs/export-failed', adminOnly, exportFailedEmailLogs);
 router.post('/email-logs/retry-all', adminOnly, retryAllFailedEmails);
 router.post('/email-logs/:logId/retry', adminOnly, retrySingleEmail);
 router.get('/email-queue/progress', adminOnly, getEmailQueueProgress);
+router.post('/email-logs/cleanup', superAdminOnly, cleanupEmailLogs);
 
 // ==================== CSV STUDENT IMPORT ====================
 router.get('/students/csv-template', adminOnly, downloadCSVTemplate);

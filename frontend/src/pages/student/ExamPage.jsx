@@ -118,6 +118,7 @@ export default function ExamPage() {
   const [accessCodeError, setAccessCodeError] = useState('')
   const [startingWithCode, setStartingWithCode] = useState(false)
   const [webcamPermissionGranted, setWebcamPermissionGranted] = useState(null)
+  const [retryTrigger, setRetryTrigger] = useState(0)
 
   const autoSaveRef = useRef(null)
   const timerRef = useRef(null)
@@ -448,6 +449,11 @@ export default function ExamPage() {
     setWebcamPermissionGranted(granted)
   }, [])
 
+  const handleRetryCamera = useCallback(() => {
+    setWebcamPermissionGranted(null)
+    setRetryTrigger(prev => prev + 1)
+  }, [])
+
   // ── Violation handler ─────────────────────────────────────
   const triggerViolation = useCallback(async (type) => {
     // Use the ref (not state) so closures with stale `submitted` still see the latest value
@@ -658,36 +664,7 @@ export default function ExamPage() {
     </div>
   )
 
-  // Webcam access block dialog
-  if (examData?.enableAIProctoring && webcamPermissionGranted === false) {
-    return (
-      <div className="min-h-screen flex items-center justify-center p-6 bg-slate-950">
-        <div className="glass-card w-full max-w-md p-8 text-center border-red-500/30 slide-up">
-          <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500 border border-red-500/20">
-            <EyeOff size={32} />
-          </div>
-          <h2 className="text-xl font-bold text-slate-100 font-['Outfit'] mb-3">Camera Access Required</h2>
-          <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-            This exam requires webcam access. Please allow camera permission to continue.
-          </p>
-          <div className="flex flex-col gap-3">
-            <button
-              onClick={() => window.location.reload()}
-              className="btn-primary w-full flex items-center justify-center gap-2 cursor-pointer"
-            >
-              Retry Camera Access
-            </button>
-            <button
-              onClick={() => navigate('/student/dashboard')}
-              className="btn-secondary w-full cursor-pointer"
-            >
-              Back to Dashboard
-            </button>
-          </div>
-        </div>
-      </div>
-    )
-  }
+  // Webcam access check handled in-line inside return block to prevent unmounting AIProctor component
 
   if (needsAccessCode) {
     return (
@@ -739,247 +716,293 @@ export default function ExamPage() {
 
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-slate-950 no-select" style={{ userSelect: 'none' }}>
-      {/* ── Top Bar ─────────────────────────────────────────── */}
-      <header className="flex items-center justify-between px-4 py-2.5 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
-        <div className="flex items-center gap-3 min-w-0">
-          <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
-            <BookOpen size={14} className="text-white" />
-          </div>
-          <div className="min-w-0">
-            <h1 className="text-sm font-bold text-slate-100 truncate font-['Outfit']">{examData?.title}</h1>
-            <p className="text-xs text-slate-500">Q {currentIdx + 1} of {questions.length}</p>
+      {examData?.enableAIProctoring && webcamPermissionGranted === null ? (
+        <div className="min-h-screen flex-1 flex items-center justify-center p-6 bg-slate-950">
+          <div className="text-center">
+            <div className="spinner mx-auto mb-4 !w-10 !h-10"></div>
+            <p className="text-slate-300 text-lg font-medium">Initializing Camera & AI Proctor...</p>
+            <p className="text-slate-500 text-sm mt-1">Please allow camera access when prompted</p>
           </div>
         </div>
-
-        {/* Timer */}
-        <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-base font-mono tabular-nums ${timerDanger ? 'bg-red-500/20 border border-red-500/40 text-red-400 timer-danger' :
-          timerWarning ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' :
-            'bg-slate-800 border border-slate-700 text-slate-200'
-          }`}>
-          <Clock size={16} className={timerDanger ? 'text-red-400' : timerWarning ? 'text-amber-400' : 'text-slate-400'} />
-          {formatTime(timeLeft)}
-        </div>
-
-        {/* Right controls */}
-        <div className="flex items-center gap-2">
-          {/* Violations indicator */}
-          {violations > 0 && (
-            <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/15 border border-red-500/30 rounded-xl">
-              <AlertTriangle size={13} className="text-red-400" />
-              <span className="text-red-400 text-xs font-semibold">{violations}/{maxViolations}</span>
+      ) : examData?.enableAIProctoring && webcamPermissionGranted === false ? (
+        <div className="min-h-screen flex-1 flex items-center justify-center p-6 bg-slate-950">
+          <div className="glass-card w-full max-w-md p-8 text-center border-red-500/30 slide-up">
+            <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500 border border-red-500/20">
+              <EyeOff size={32} />
             </div>
-          )}
-
-          <button
-            onClick={() => {
-              if (document.fullscreenElement) {
-                document.exitFullscreen().then(() => setIsFullscreen(false))
-              } else {
-                document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { })
-              }
-            }}
-            className="btn-icon text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
-            title="Toggle Fullscreen"
-          >
-            <Maximize size={16} />
-          </button>
-
-          {saveStatus === 'error' && (
-            <span className="text-xs text-red-400 font-medium mr-2 animate-pulse" id="save-status-indicator">
-              not saved, retrying...
-            </span>
-          )}
-          {saveStatus === 'saving' && (
-            <span className="text-xs text-blue-400 font-medium mr-2" id="save-status-indicator">
-              Saving...
-            </span>
-          )}
-          <button
-            onClick={() => { saveProgress(true) }}
-            className="btn-secondary btn-sm text-xs"
-          >
-            Save
-          </button>
-
-          {/* Multi-subject: show only submit exam button (per-subject submit is at nav footer) */}
-          <button
-            onClick={() => setShowSubmitConfirm(true)}
-            disabled={submitting || subjectTransitioning}
-            className="btn-danger btn-sm flex items-center gap-1.5 text-xs"
-          >
-            <Send size={14} /> Submit Exam
-          </button>
-        </div>
-      </header>
-
-      {/* Multi-subject tabs — clickable free navigation */}
-      {totalSubjects > 1 && (
-        <div className="flex-shrink-0 bg-slate-900/80 border-b border-slate-800 px-4 py-2">
-          <div className="flex items-center gap-3">
-            <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Subjects:</span>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              {Array.from({ length: totalSubjects }).map((_, i) => {
-                const isActive = i === currentSubjectIndex
-                const isVisited = completedSubjects.includes(i)
-                return (
-                  <button
-                    key={i}
-                    type="button"
-                    onClick={() => handleSwitchSubject(i)}
-                    disabled={subjectTransitioning || isActive}
-                    className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${isActive
-                      ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 cursor-default'
-                      : isVisited
-                        ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer'
-                        : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-200 cursor-pointer'
-                      } disabled:opacity-60`}
-                    title={isActive ? 'Current subject' : `Switch to ${examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}`}
-                  >
-                    {isVisited && !isActive ? '✓ ' : ''}
-                    {examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}
-                  </button>
-                )
-              })}
+            <h2 className="text-xl font-bold text-slate-100 font-['Outfit'] mb-3">Camera Access Required</h2>
+            <p className="text-slate-400 text-sm mb-6 leading-relaxed">
+              This exam requires webcam access for AI Proctoring. To continue:
+              <br />
+              <span className="text-xs text-slate-500 block mt-2 text-left bg-slate-900/60 p-3 rounded-lg border border-slate-800">
+                1. Click the site settings icon (lock or sliders) next to the URL address bar.
+                <br />
+                2. Change Camera permission to <strong>Allow</strong>.
+                <br />
+                3. Click the <strong>Retry Camera Access</strong> button below.
+              </span>
+            </p>
+            <div className="flex flex-col gap-3">
+              <button
+                onClick={handleRetryCamera}
+                className="btn-primary w-full flex items-center justify-center gap-2 cursor-pointer"
+              >
+                Retry Camera Access
+              </button>
+              <button
+                onClick={() => navigate('/student/dashboard')}
+                className="btn-secondary w-full cursor-pointer"
+              >
+                Back to Dashboard
+              </button>
             </div>
-            {subjectTransitioning && (
-              <span className="text-xs text-slate-500">Switching…</span>
-            )}
           </div>
         </div>
-      )}
-
-      {/* ── Progress bar ─────────────────────────────────────── */}
-      <div className="progress-bar h-1 rounded-none flex-shrink-0">
-        <div className="progress-fill rounded-none" style={{ width: `${((currentIdx + 1) / questions.length) * 100}%` }}></div>
-      </div>
-
-      {/* ── Body ─────────────────────────────────────────────── */}
-      <div className="flex flex-1 overflow-hidden">
-        {/* Question area */}
-        <main className="flex-1 overflow-y-auto flex flex-col">
-          {currentQ && (
-            <div className="flex-1 p-5 md:p-6 max-w-4xl mx-auto w-full">
-              {/* Question header */}
-              <div className="flex items-start gap-3 mb-5">
-                <div className="w-9 h-9 bg-blue-600/20 border border-blue-500/40 rounded-xl flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0">
-                  {currentIdx + 1}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    {currentQ.topic && <span className="badge badge-blue text-xs">{currentQ.topic}</span>}
-                    <span className="text-xs text-slate-500">{currentQ.marks} mark{currentQ.marks !== 1 ? 's' : ''}</span>
-                  </div>
-                  <p className="text-slate-100 text-base leading-relaxed font-medium">{currentQ.questionText}</p>
-                </div>
+      ) : (
+        <>
+          {/* ── Top Bar ─────────────────────────────────────────── */}
+          <header className="flex items-center justify-between px-4 py-2.5 bg-slate-900 border-b border-slate-700/50 flex-shrink-0">
+            <div className="flex items-center gap-3 min-w-0">
+              <div className="w-7 h-7 bg-gradient-to-br from-blue-500 to-indigo-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                <BookOpen size={14} className="text-white" />
               </div>
-
-              {/* Options */}
-              <div className="space-y-3">
-                {['A', 'B', 'C', 'D'].map(opt => (
-                  <button
-                    key={opt}
-                    onClick={() => selectAnswer(opt)}
-                    className={`w-full text-left flex items-center gap-4 p-4 rounded-xl border-2 transition-all duration-150 active:scale-[0.995] ${selectedOption === opt
-                      ? 'border-blue-500 bg-blue-600/15 text-slate-100'
-                      : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-700/40'
-                      }`}
-                  >
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm flex-shrink-0 transition-all ${selectedOption === opt
-                      ? 'bg-blue-600 text-white'
-                      : 'bg-slate-700 text-slate-400'
-                      }`}>
-                      {opt}
-                    </div>
-                    <span className="leading-snug">{currentQ.options[opt]}</span>
-                    {selectedOption === opt && (
-                      <div className="ml-auto w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
-                        <div className="w-2.5 h-2.5 bg-white rounded-full"></div>
-                      </div>
-                    )}
-                  </button>
-                ))}
-              </div>
-
-              {/* Question actions */}
-              <div className="flex items-center gap-3 mt-6">
-                {selectedOption && (
-                  <button onClick={clearAnswer} className="btn-secondary btn-sm text-xs flex items-center gap-1.5">
-                    <EyeOff size={13} /> Clear
-                  </button>
-                )}
-                <button
-                  onClick={toggleReview}
-                  className={`btn-sm flex items-center gap-1.5 text-xs ${isMarked ? 'btn-warning' : 'btn-secondary'
-                    }`}
-                >
-                  <Flag size={13} />
-                  {isMarked ? 'Unmark Review' : 'Mark for Review'}
-                </button>
+              <div className="min-w-0">
+                <h1 className="text-sm font-bold text-slate-100 truncate font-['Outfit']">{examData?.title}</h1>
+                <p className="text-xs text-slate-500">Q {currentIdx + 1} of {questions.length}</p>
               </div>
             </div>
-          )}
 
-          {/* Navigation footer */}
-          <div className="flex items-center justify-between px-5 md:px-6 py-4 border-t border-slate-800 flex-shrink-0 bg-slate-900/50">
-            <button
-              onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
-              disabled={currentIdx === 0}
-              className="btn-secondary btn-sm flex items-center gap-2 disabled:opacity-40"
-            >
-              <ChevronLeft size={16} /> Previous
-            </button>
+            {/* Timer */}
+            <div className={`flex items-center gap-2 px-4 py-2 rounded-xl font-bold text-base font-mono tabular-nums ${timerDanger ? 'bg-red-500/20 border border-red-500/40 text-red-400 timer-danger' :
+              timerWarning ? 'bg-amber-500/15 border border-amber-500/30 text-amber-400' :
+                'bg-slate-800 border border-slate-700 text-slate-200'
+              }`}>
+              <Clock size={16} className={timerDanger ? 'text-red-400' : timerWarning ? 'text-amber-400' : 'text-slate-400'} />
+              {formatTime(timeLeft)}
+            </div>
 
+            {/* Right controls */}
             <div className="flex items-center gap-2">
-              {/* Jump to any Q on mobile */}
-              <button
-                onClick={() => setPaletteOpen(!paletteOpen)}
-                className="btn-secondary btn-sm text-xs md:hidden"
-              >
-                Palette
-              </button>
-            </div>
+              {/* Violations indicator */}
+              {violations > 0 && (
+                <div className="flex items-center gap-1.5 px-3 py-1.5 bg-red-500/15 border border-red-500/30 rounded-xl">
+                  <AlertTriangle size={13} className="text-red-400" />
+                  <span className="text-red-400 text-xs font-semibold">{violations}/{maxViolations}</span>
+                </div>
+              )}
 
-            {currentIdx < questions.length - 1 ? (
               <button
-                onClick={() => setCurrentIdx(i => i + 1)}
-                className="btn-primary btn-sm flex items-center gap-2"
+                onClick={() => {
+                  if (document.fullscreenElement) {
+                    document.exitFullscreen().then(() => setIsFullscreen(false))
+                  } else {
+                    document.documentElement.requestFullscreen().then(() => setIsFullscreen(true)).catch(() => { })
+                  }
+                }}
+                className="btn-icon text-slate-400 hover:text-slate-200 hover:bg-slate-700/50"
+                title="Toggle Fullscreen"
               >
-                Next <ChevronRight size={16} />
+                <Maximize size={16} />
               </button>
-            ) : (
+
+              {saveStatus === 'error' && (
+                <span className="text-xs text-red-400 font-medium mr-2 animate-pulse" id="save-status-indicator">
+                  not saved, retrying...
+                </span>
+              )}
+              {saveStatus === 'saving' && (
+                <span className="text-xs text-blue-400 font-medium mr-2" id="save-status-indicator">
+                  Saving...
+                </span>
+              )}
+              <button
+                onClick={() => { saveProgress(true) }}
+                className="btn-secondary btn-sm text-xs"
+              >
+                Save
+              </button>
+
+              {/* Multi-subject: show only submit exam button (per-subject submit is at nav footer) */}
               <button
                 onClick={() => setShowSubmitConfirm(true)}
                 disabled={submitting || subjectTransitioning}
-                className="btn-danger btn-sm flex items-center gap-2"
+                className="btn-danger btn-sm flex items-center gap-1.5 text-xs"
               >
                 <Send size={14} /> Submit Exam
               </button>
-            )}
-          </div>
-        </main>
+            </div>
+          </header>
 
-        {/* Question Palette Sidebar */}
-        <aside className={`border-l border-slate-700/50 bg-slate-900/80 flex-shrink-0 transition-all duration-300 overflow-hidden ${paletteOpen ? 'w-56' : 'w-0'}`}>
-          {paletteOpen && (
-            <QuestionPalette
-              questions={questions}
-              answers={answers}
-              reviewList={reviewList}
-              currentIdx={currentIdx}
-              onJump={setCurrentIdx}
-            />
+          {/* Multi-subject tabs — clickable free navigation */}
+          {totalSubjects > 1 && (
+            <div className="flex-shrink-0 bg-slate-900/80 border-b border-slate-800 px-4 py-2">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-slate-400 font-medium whitespace-nowrap">Subjects:</span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  {Array.from({ length: totalSubjects }).map((_, i) => {
+                    const isActive = i === currentSubjectIndex
+                    const isVisited = completedSubjects.includes(i)
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => handleSwitchSubject(i)}
+                        disabled={subjectTransitioning || isActive}
+                        className={`flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-all ${isActive
+                          ? 'bg-blue-500/20 border-blue-500/50 text-blue-300 cursor-default'
+                          : isVisited
+                            ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-400 hover:bg-emerald-500/25 cursor-pointer'
+                            : 'bg-slate-800/50 border-slate-700/40 text-slate-400 hover:border-slate-500 hover:text-slate-200 cursor-pointer'
+                          } disabled:opacity-60`}
+                        title={isActive ? 'Current subject' : `Switch to ${examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}`}
+                      >
+                        {isVisited && !isActive ? '✓ ' : ''}
+                        {examData?.subjects?.[i]?.subjectName || `Subject ${i + 1}`}
+                      </button>
+                    )
+                  })}
+                </div>
+                {subjectTransitioning && (
+                  <span className="text-xs text-slate-500">Switching…</span>
+                )}
+              </div>
+            </div>
           )}
-        </aside>
 
-        {/* Palette toggle for desktop */}
-        <button
-          onClick={() => setPaletteOpen(!paletteOpen)}
-          className="absolute right-0 top-1/2 -translate-y-1/2 hidden md:flex w-5 h-16 bg-slate-800 border border-slate-700/50 rounded-l-lg items-center justify-center text-slate-400 hover:text-slate-200 transition-colors"
-          style={{ position: 'fixed', right: paletteOpen ? '224px' : '0' }}
-        >
-          {paletteOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
-        </button>
-      </div>
+          {/* ── Progress bar ─────────────────────────────────────── */}
+          <div className="progress-bar h-1 rounded-none flex-shrink-0">
+            <div className="progress-fill rounded-none" style={{ width: `${((currentIdx + 1) / questions.length) * 100}%` }}></div>
+          </div>
+
+          {/* ── Body ─────────────────────────────────────────────── */}
+          <div className="flex-1 overflow-hidden flex">
+            {/* Question area */}
+            <main className="flex-1 overflow-y-auto flex flex-col">
+              {currentQ && (
+                <div className="flex-1 p-5 md:p-6 max-w-4xl mx-auto w-full">
+                  {/* Question header */}
+                  <div className="flex items-start gap-3 mb-5">
+                    <div className="w-9 h-9 bg-blue-600/20 border border-blue-500/40 rounded-xl flex items-center justify-center text-blue-400 font-bold text-sm flex-shrink-0">
+                      {currentIdx + 1}
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        {currentQ.topic && <span className="badge badge-blue text-xs">{currentQ.topic}</span>}
+                        <span className="text-xs text-slate-500">{currentQ.marks} mark{currentQ.marks !== 1 ? 's' : ''}</span>
+                      </div>
+                      <p className="text-slate-100 text-base leading-relaxed font-medium">{currentQ.questionText}</p>
+                    </div>
+                  </div>
+
+                  {/* Options */}
+                  <div className="space-y-3">
+                    {['A', 'B', 'C', 'D'].map(opt => (
+                      <button
+                        key={opt}
+                        onClick={() => selectAnswer(opt)}
+                        className={`w-full text-left flex items-center gap-4 p-4 rounded-xl border-2 transition-all duration-150 active:scale-[0.995] ${selectedOption === opt
+                          ? 'border-blue-500 bg-blue-600/15 text-slate-100'
+                          : 'border-slate-700/60 bg-slate-800/40 text-slate-300 hover:border-slate-600 hover:bg-slate-700/40'
+                          }`}
+                      >
+                        <div className={`w-8 h-8 rounded-lg flex items-center justify-center font-bold text-sm flex-shrink-0 transition-all ${selectedOption === opt
+                          ? 'bg-blue-600 text-white'
+                          : 'bg-slate-700 text-slate-400'
+                          }`}>
+                          {opt}
+                        </div>
+                        <span className="leading-snug">{currentQ.options[opt]}</span>
+                        {selectedOption === opt && (
+                          <div className="ml-auto w-5 h-5 bg-blue-500 rounded-full flex items-center justify-center flex-shrink-0">
+                            <div className="w-2.5 h-2.5 bg-white rounded-full"></div>
+                          </div>
+                        )}
+                      </button>
+                    ))}
+                  </div>
+
+                  {/* Question actions */}
+                  <div className="flex items-center gap-3 mt-6">
+                    {selectedOption && (
+                      <button onClick={clearAnswer} className="btn-secondary btn-sm text-xs flex items-center gap-1.5">
+                        <EyeOff size={13} /> Clear
+                      </button>
+                    )}
+                    <button
+                      onClick={toggleReview}
+                      className={`btn-sm flex items-center gap-1.5 text-xs ${isMarked ? 'btn-warning' : 'btn-secondary'
+                        }`}
+                    >
+                      <Flag size={13} />
+                      {isMarked ? 'Unmark Review' : 'Mark for Review'}
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* Navigation footer */}
+              <div className="flex items-center justify-between px-5 md:px-6 py-4 border-t border-slate-800 flex-shrink-0 bg-slate-900/50">
+                <button
+                  onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
+                  disabled={currentIdx === 0}
+                  className="btn-secondary btn-sm flex items-center gap-2 disabled:opacity-40"
+                >
+                  <ChevronLeft size={16} /> Previous
+                </button>
+
+                <div className="flex items-center gap-2">
+                  {/* Jump to any Q on mobile */}
+                  <button
+                    onClick={() => setPaletteOpen(!paletteOpen)}
+                    className="btn-secondary btn-sm text-xs md:hidden"
+                  >
+                    Palette
+                  </button>
+                </div>
+
+                {currentIdx < questions.length - 1 ? (
+                  <button
+                    onClick={() => setCurrentIdx(i => i + 1)}
+                    className="btn-primary btn-sm flex items-center gap-2"
+                  >
+                    Next <ChevronRight size={16} />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => setShowSubmitConfirm(true)}
+                    disabled={submitting || subjectTransitioning}
+                    className="btn-danger btn-sm flex items-center gap-2"
+                  >
+                    <Send size={14} /> Submit Exam
+                  </button>
+                )}
+              </div>
+            </main>
+
+            {/* Question Palette Sidebar */}
+            <aside className={`border-l border-slate-700/50 bg-slate-900/80 flex-shrink-0 transition-all duration-300 overflow-hidden ${paletteOpen ? 'w-56' : 'w-0'}`}>
+              {paletteOpen && (
+                <QuestionPalette
+                  questions={questions}
+                  answers={answers}
+                  reviewList={reviewList}
+                  currentIdx={currentIdx}
+                  onJump={setCurrentIdx}
+                />
+              )}
+            </aside>
+
+            {/* Palette toggle for desktop */}
+            <button
+              onClick={() => setPaletteOpen(!paletteOpen)}
+              className="absolute right-0 top-1/2 -translate-y-1/2 hidden md:flex w-5 h-16 bg-slate-800 border border-slate-700/50 rounded-l-lg items-center justify-center text-slate-400 hover:text-slate-200 transition-colors"
+              style={{ position: 'fixed', right: paletteOpen ? '224px' : '0' }}
+            >
+              {paletteOpen ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+            </button>
+          </div>
+        </>
+      )}
 
       {/* ── Submit Confirm Modal ──────────────────────────────── */}
       {showSubmitConfirm && (
@@ -1086,6 +1109,7 @@ export default function ExamPage() {
           resultId={resultId}
           onViolation={triggerViolation}
           onPermissionChange={handlePermissionChange}
+          retryTrigger={retryTrigger}
         />
       )}
     </div>

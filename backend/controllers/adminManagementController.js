@@ -1211,6 +1211,61 @@ const getLiveMonitorData = async (req, res) => {
   }
 };
 
+const cleanupEmailLogs = async (req, res) => {
+  try {
+    if (req.admin?.role !== 'super_admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Access denied. Only Super Admins can perform email log cleanup.'
+      });
+    }
+
+    const { range } = req.body;
+
+    if (!['7', '30', '90', 'all'].includes(String(range))) {
+      return res.status(400).json({
+        success: false,
+        message: 'Invalid cleanup range option. Must be 7, 30, 90, or all.'
+      });
+    }
+
+    let query = {};
+    if (range !== 'all') {
+      const days = parseInt(range, 10);
+      const cutoffDate = new Date();
+      cutoffDate.setDate(cutoffDate.getDate() - days);
+      query = { createdAt: { $lt: cutoffDate } };
+    }
+
+    const result = await EmailLog.deleteMany(query);
+
+    if (req.admin) {
+      req.admin.activityLogs = req.admin.activityLogs || [];
+      req.admin.activityLogs.push({
+        action: 'EMAIL_LOG_CLEANUP',
+        details: `Deleted ${result.deletedCount} email logs (Range: ${range === 'all' ? 'All' : 'Older than ' + range + ' days'})`,
+        ip: req.ip || req.headers['x-forwarded-for'] || req.socket.remoteAddress
+      });
+      if (req.admin.activityLogs.length > 100) {
+        req.admin.activityLogs = req.admin.activityLogs.slice(-100);
+      }
+      await req.admin.save();
+    }
+
+    res.json({
+      success: true,
+      deletedCount: result.deletedCount,
+      message: `${result.deletedCount.toLocaleString()} email logs deleted successfully.`
+    });
+  } catch (error) {
+    console.error('EMAIL LOG CLEANUP ERROR:', error);
+    res.status(500).json({
+      success: false,
+      message: error.message || 'An error occurred while cleaning up email logs.'
+    });
+  }
+};
+
 module.exports = {
   getAllAdmins, createAdmin, updateAdmin, deleteAdmin, toggleAdminStatus,
   resetAdminPassword, getAdminActivityLogs,
@@ -1222,5 +1277,9 @@ module.exports = {
   exportFailedEmailLogs,
   previewRecipientCount,
   getLiveMonitorData,
-  getEmailQueueProgress
+  getEmailQueueProgress,
+  cleanupEmailLogs
 };
+
+
+
