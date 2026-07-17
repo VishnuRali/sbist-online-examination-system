@@ -695,6 +695,20 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                   <span className="font-bold text-purple-400">{baselineYaw.toFixed(3)}</span>
                 </div>
                 <div className="flex justify-between">
+                  <span>Yaw Offset:</span>
+                  <span className={`font-bold ${(devYawRatio - baselineYaw) > 0 ? 'text-amber-400' : 'text-blue-400'}`}>
+                    {(devYawRatio - baselineYaw).toFixed(3)}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Left Threshold:</span>
+                  <span className="font-bold text-red-400">{(baselineYaw + 0.15).toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Right Threshold:</span>
+                  <span className="font-bold text-red-400">{(baselineYaw - 0.15).toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between">
                   <span>State:</span>
                   <span className={`font-bold ${
                     devState === 'Looking Center' 
