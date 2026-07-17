@@ -140,71 +140,84 @@ const studentLogin = async (req, res) => {
     }
 
     const loginId = String(studentId).trim();
-    const student = await Student.findOne({
+    const students = await Student.find({
       $or: [
         { studentId: loginId.toUpperCase() },
         { email: loginId.toLowerCase() }
       ]
     }).populate('department', 'name code');
 
-    if (!student) {
+    if (!students || students.length === 0) {
       console.warn(`🔑 [Student Login Failed] Student identifier "${studentId}" not found.`);
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Check account lockout
-    if (student.lockUntil && student.lockUntil > new Date()) {
-      const minutesLeft = Math.ceil((student.lockUntil.getTime() - Date.now()) / 60000);
+    // If the only matching record is locked, return lock message immediately
+    if (students.length === 1 && students[0].lockUntil && students[0].lockUntil > new Date()) {
+      const minutesLeft = Math.ceil((students[0].lockUntil.getTime() - Date.now()) / 60000);
       return res.status(403).json({
         success: false,
         message: `Account is temporarily locked. Please try again in ${minutesLeft} minutes.`
       });
     }
 
-    if (!student.isActive) {
-      console.warn(`🔑 [Student Login Failed] Student account "${studentId}" is deactivated.`);
-      return res.status(403).json({ success: false, message: 'Your account has been deactivated. Contact admin.' });
+    // Attempt to match password among any matching records
+    let matchedStudent = null;
+    let matchFound = false;
+
+    for (const student of students) {
+      if (student.lockUntil && student.lockUntil > new Date()) {
+        continue;
+      }
+      const isMatch = await student.comparePassword(password);
+      if (isMatch) {
+        matchedStudent = student;
+        matchFound = true;
+        break;
+      }
     }
 
-    const isMatch = await student.comparePassword(password);
-    if (!isMatch) {
+    if (!matchFound) {
       console.warn(`🔑 [Student Login Failed] Incorrect password entered for Student identifier "${studentId}".`);
-
-      student.loginAttempts = (student.loginAttempts || 0) + 1;
-      if (student.loginAttempts >= 5) {
-        student.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
-        await student.save();
+      const targetStudent = students[0];
+      targetStudent.loginAttempts = (targetStudent.loginAttempts || 0) + 1;
+      if (targetStudent.loginAttempts >= 5) {
+        targetStudent.lockUntil = new Date(Date.now() + 15 * 60 * 1000); // 15 mins
+        await targetStudent.save();
         return res.status(403).json({
           success: false,
           message: 'Account locked due to 5 failed attempts. Please try again in 15 minutes.'
         });
       }
-      await student.save();
+      await targetStudent.save();
       return res.status(401).json({ success: false, message: 'Invalid credentials' });
     }
 
-    // Generate a new session ID — this automatically invalidates any previous active session
-    // on another device, without locking the account permanently.
+    if (!matchedStudent.isActive) {
+      console.warn(`🔑 [Student Login Failed] Student account "${studentId}" is deactivated.`);
+      return res.status(403).json({ success: false, message: 'Your account has been deactivated. Contact admin.' });
+    }
+
+    // Generate a new session ID
     const sessionId = crypto.randomUUID();
 
     // Success: reset attempts, update session
-    student.loginAttempts = 0;
-    student.lockUntil = undefined;
-    student.isLoggedIn = true;
-    student.currentSessionId = sessionId;
-    student.lastLogin = new Date();
-    await student.save();
+    matchedStudent.loginAttempts = 0;
+    matchedStudent.lockUntil = undefined;
+    matchedStudent.isLoggedIn = true;
+    matchedStudent.currentSessionId = sessionId;
+    matchedStudent.lastLogin = new Date();
+    await matchedStudent.save();
 
-    // Include sessionId in the JWT so the middleware can validate it
-    const token = generateToken({ id: student._id, role: 'student', studentId: student.studentId, sessionId });
+    const token = generateToken({ id: matchedStudent._id, role: 'student', studentId: matchedStudent.studentId, sessionId });
 
     res.json({
       success: true,
       message: 'Login successful',
       token,
-      user: student.toJSON(),
+      user: matchedStudent.toJSON(),
       role: 'student',
-      forcePasswordChange: !student.isPasswordChanged,
+      forcePasswordChange: !matchedStudent.isPasswordChanged,
     });
   } catch (error) {
     console.error('Student login error:', error);

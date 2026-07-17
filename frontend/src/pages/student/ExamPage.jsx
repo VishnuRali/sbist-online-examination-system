@@ -321,8 +321,12 @@ export default function ExamPage() {
 
   // ── Anti-cheat: visibility/blur ───────────────────────────
   useEffect(() => {
-    // Remove all anti-cheat listeners once exam is submitted.
-    if (submitted) return
+    // Remove all anti-cheat listeners once exam is submitted or not yet started.
+    if (submitted || !resultId) return
+
+    // Prevent false positives while camera/AI is initializing or prompting for permission
+    const isCameraInitializing = examData?.enableAIProctoring && webcamPermissionGranted !== true;
+    if (isCameraInitializing) return
 
     const handleVisibilityChange = () => {
       if (document.hidden && !submittedRef.current) {
@@ -371,7 +375,7 @@ export default function ExamPage() {
       document.removeEventListener('selectstart', preventTextSelection)
       document.removeEventListener('keydown', preventKeyboard)
     }
-  }, [submitted, resultId])
+  }, [submitted, resultId, webcamPermissionGranted, examData])
 
 
   // ── Save progress ─────────────────────────────────────────

@@ -13,6 +13,29 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
   const [minimized, setMinimized] = useState(false)
   const [showPrompt, setShowPrompt] = useState(false)
 
+  // Dev mode live metrics overlay
+  const [devYawRatio, setDevYawRatio] = useState(0.5)
+  const [devState, setDevState] = useState('Looking Center')
+  const [devTimer, setDevTimer] = useState(0)
+  const [devCooldownTimer, setDevCooldownTimer] = useState(0)
+  const [devWarnings, setDevWarnings] = useState(0)
+  const [devViolations, setDevViolations] = useState(0)
+
+  const lastWarningTimeRef = useRef(0)
+  const lastLogTimeRef = useRef(0)
+  const lastConsoleLogTimeRef = useRef(0)
+  const warningsCountRef = useRef(0)
+  const violationsCountRef = useRef(0)
+  
+  // Calibration states & refs
+  const [isCalibrating, setIsCalibrating] = useState(true)
+  const [baselineYaw, setBaselineYaw] = useState(0.5)
+  const [calibrationProgress, setCalibrationProgress] = useState(0)
+  const calibrationSamplesRef = useRef([])
+  const baselineYawRef = useRef(0.5)
+  const calibrationStartTimeRef = useRef(null)
+  const isMountedRef = useRef(true)
+
   // Floating draggable position in pixels
   const [position, setPosition] = useState({ x: window.innerWidth - 240, y: 70 })
   const [isDragging, setIsDragging] = useState(false)
@@ -30,6 +53,13 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
   const multipleFacesStartTimeRef = useRef(null)
   const reconnectInProgressRef = useRef(false)
   const initIdRef = useRef(0)
+
+  useEffect(() => {
+    isMountedRef.current = true
+    return () => {
+      isMountedRef.current = false
+    }
+  }, [])
 
   // Dragging event handlers
   const handleMouseDown = (e) => {
@@ -153,6 +183,13 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
         
         logDev("getUserMedia() success (reconnect)");
 
+        if (!isMountedRef.current) {
+          if (stream) {
+            stream.getTracks().forEach((t) => t.stop());
+          }
+          return;
+        }
+
         if (!stream || stream.getVideoTracks().length === 0) {
           logDev("reconnect: stream is empty or has no tracks.");
           throw new Error("Stream is empty or has no tracks.");
@@ -174,13 +211,19 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
         }
         reconnectInProgressRef.current = false;
       } catch (err) {
+        if (!isMountedRef.current) return;
+
         logDev("getUserMedia() error (reconnect)", err);
         logDev("Error name: " + err.name);
         logDev("Error message: " + err.message);
 
         attempts++;
         if (attempts < 5) {
-          setTimeout(tryConnect, 3000);
+          setTimeout(() => {
+            if (isMountedRef.current) {
+              tryConnect();
+            }
+          }, 3000);
         } else {
           reconnectInProgressRef.current = false;
           setError("Webcam connection lost. Check hardware connection.");
@@ -210,6 +253,10 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
         setLoading(true);
         setError(null);
         onPermissionChange(null);
+        calibrationSamplesRef.current = [];
+        calibrationStartTimeRef.current = null;
+        baselineYawRef.current = 0.5;
+        setIsCalibrating(true);
 
         // 1. Check Permissions API first
         let permissionState = 'prompt';
@@ -443,42 +490,108 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
               const leftEye = landmarks[33]
               const rightEye = landmarks[263]
 
-              let lookingAway = false
+              const now = Date.now()
+              const cooldownActive = now - lastWarningTimeRef.current < 5000
+              const cooldownRemaining = cooldownActive ? Math.max(0, (5000 - (now - lastWarningTimeRef.current)) / 1000) : 0
+              let isCalibDone = baselineYawRef.current !== 0.5 || !isCalibrating
+
               if (nose && leftEye && rightEye) {
                 const minX = Math.min(leftEye.x, rightEye.x)
                 const maxX = Math.max(leftEye.x, rightEye.x)
-                const horizontalRatio = (nose.x - minX) / (maxX - minX)
+                horizontalRatio = (nose.x - minX) / (maxX - minX)
 
-                // Only detect explicit LEFT and RIGHT head turns.
-                // Thresholds are widened (0.24 and 0.76) to detect only clear rotations where the face is no longer directed at the screen.
-                // Y-axis changes (looking down at keyboard/mouse or up/down while thinking) are completely ignored.
-                if (horizontalRatio < 0.24 || horizontalRatio > 0.76) {
-                  lookingAway = true
+                if (!isCalibDone) {
+                  if (calibrationStartTimeRef.current === null) {
+                    calibrationStartTimeRef.current = now
+                  }
+                  
+                  const elapsedCalib = now - calibrationStartTimeRef.current
+                  calibrationSamplesRef.current.push(horizontalRatio)
+                  currentState = 'Calibrating...'
+
+                  // Update calibration percentage progress in state
+                  const progressPercent = Math.min(100, Math.round((elapsedCalib / 3000) * 100))
+                  setCalibrationProgress(progressPercent)
+
+                  if (elapsedCalib >= 3000) {
+                    const samples = calibrationSamplesRef.current
+                    if (samples.length > 0) {
+                      const average = samples.reduce((a, b) => a + b, 0) / samples.length
+                      baselineYawRef.current = average
+                      setBaselineYaw(average)
+                      setIsCalibrating(false)
+                      isCalibDone = true
+                    } else {
+                      calibrationStartTimeRef.current = null
+                    }
+                  }
+                }
+
+                if (isCalibDone) {
+                  // Adaptive Detection Phase: relative to personal baseline (threshold offset 0.15)
+                  const deviation = horizontalRatio - baselineYawRef.current
+                  if (deviation > 0.15) {
+                    currentState = 'Looking Left'
+                    lookingAway = true
+                  } else if (deviation < -0.15) {
+                    currentState = 'Looking Right'
+                    lookingAway = true
+                  }
                 }
               }
 
-              if (lookingAway) {
-                if (headTurnStartTimeRef.current === null) {
-                  headTurnStartTimeRef.current = Date.now()
+              if (lookingAway && isCalibDone) {
+                if (cooldownActive) {
+                  // Freeze the start time during active cooldown
+                  headTurnStartTimeRef.current = now
                 } else {
-                  const elapsed = Date.now() - headTurnStartTimeRef.current
-                  if (elapsed >= 5000) {
-                    onViolation("Head Turn")
-                    headTurnStartTimeRef.current = Date.now()
-                    setShowPrompt(false)
-                  } else if (elapsed >= 2000) {
-                    setShowPrompt(prev => {
-                      if (!prev) return true
-                      return prev
-                    })
+                  if (headTurnStartTimeRef.current === null) {
+                    headTurnStartTimeRef.current = now
+                  } else {
+                    const elapsed = now - headTurnStartTimeRef.current
+                    if (elapsed >= 5000) {
+                      // Stage 2: Head still turned for another 2s (total 5s) -> Record 1 violation
+                      onViolation("Head Turn")
+                      violationsCountRef.current++
+                      lastWarningTimeRef.current = now
+                      headTurnStartTimeRef.current = now
+                      setShowPrompt(false)
+                    } else if (elapsed >= 3000) {
+                      // Stage 1: Head turned continuously for 3s -> Show message
+                      setShowPrompt(prev => {
+                        if (!prev) {
+                          warningsCountRef.current++ // Increment Stage 1 warnings count
+                        }
+                        return true
+                      })
+                    }
                   }
                 }
               } else {
-                headTurnStartTimeRef.current = null
-                setShowPrompt(prev => {
-                  if (prev) return false
-                  return prev
-                })
+                if (!cooldownActive) {
+                  headTurnStartTimeRef.current = null
+                  setShowPrompt(prev => {
+                    if (prev) return false
+                    return prev
+                  })
+                }
+              }
+
+              // Update dev live statistics and console log once every 100ms
+              if (now - lastLogTimeRef.current >= 100) {
+                lastLogTimeRef.current = now
+                setDevYawRatio(horizontalRatio)
+                setDevState(currentState)
+                const elapsedTimer = headTurnStartTimeRef.current ? Math.max(0, (now - headTurnStartTimeRef.current) / 1000) : 0
+                setDevTimer(cooldownActive ? 0 : elapsedTimer)
+                setDevCooldownTimer(cooldownRemaining)
+                setDevWarnings(warningsCountRef.current)
+                setDevViolations(violationsCountRef.current)
+              }
+
+              if (now - lastConsoleLogTimeRef.current >= 1000) {
+                lastConsoleLogTimeRef.current = now
+                console.log(`[AIProctor DEV LOG] Yaw: ${horizontalRatio.toFixed(3)} | Baseline: ${baselineYawRef.current.toFixed(3)} | State: ${currentState} | Thresholds: <${(baselineYawRef.current - 0.15).toFixed(3)} OR >${(baselineYawRef.current + 0.15).toFixed(3)} | Timer: ${headTurnStartTimeRef.current ? ((now - headTurnStartTimeRef.current) / 1000).toFixed(1) : '0.0'}s | Cooldown: ${cooldownRemaining.toFixed(1)}s | Warnings: ${warningsCountRef.current} | Violations: ${violationsCountRef.current}`)
               }
             }
           }
@@ -553,9 +666,65 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                 <p className="text-[9px] text-slate-400">Loading AI Proctor...</p>
               </div>
             )}
+            {isCalibrating && !loading && (
+              <div className="absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center text-center p-4 z-10 select-none">
+                <div className="spinner !w-6 !h-6 mb-2 mx-auto" />
+                <p className="text-[10px] font-bold text-slate-200">Calibrating Camera...</p>
+                <p className="text-[8px] text-slate-400 mt-1">Please look straight at the screen</p>
+                <p className="text-[8px] text-blue-400 mt-0.5 font-mono">
+                  Progress: {calibrationProgress}%
+                </p>
+              </div>
+            )}
             {showPrompt && (
               <div className="absolute top-2 left-2 right-2 bg-red-600/90 text-white text-[9px] py-1 px-2 rounded-md font-bold text-center z-10 border border-red-500/30 animate-pulse shadow-md">
                 Please keep your face towards the screen.
+              </div>
+            )}
+            {import.meta.env.DEV && (
+              <div className="absolute bottom-2 left-2 right-2 bg-slate-950/95 text-[8px] p-2 rounded-lg font-mono z-20 border border-slate-700/60 text-slate-300 text-left space-y-0.5 shadow-lg select-none pointer-events-none">
+                <div className="flex justify-between">
+                  <span>Yaw Ratio:</span>
+                  <span className="font-bold text-blue-400">{devYawRatio.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Baseline Yaw:</span>
+                  <span className="font-bold text-purple-400">{baselineYaw.toFixed(3)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>State:</span>
+                  <span className={`font-bold ${
+                    devState === 'Looking Center' 
+                      ? 'text-emerald-400' 
+                      : devState === 'Calibrating...' 
+                        ? 'text-cyan-400 animate-pulse' 
+                        : 'text-amber-400'
+                  }`}>{devState}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Calibration:</span>
+                  <span className={`font-bold ${isCalibrating ? 'text-amber-400 animate-pulse' : 'text-emerald-400'}`}>
+                    {isCalibrating ? 'InProgress' : 'Complete'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Detection Timer:</span>
+                  <span className="font-bold text-amber-500">{devTimer.toFixed(1)}s / 5.0s</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Cooldown Timer:</span>
+                  <span className={`font-bold ${devCooldownTimer > 0 ? 'text-red-400 animate-pulse' : 'text-slate-500'}`}>
+                    {devCooldownTimer > 0 ? `${devCooldownTimer.toFixed(1)}s` : '0.0s'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Warning Count:</span>
+                  <span className="font-bold text-yellow-500">{devWarnings}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Violation Count:</span>
+                  <span className="font-bold text-red-500">{devViolations}</span>
+                </div>
               </div>
             )}
             <video

@@ -43,6 +43,7 @@ export default function StudentProfile() {
     try {
       await api.put('/student/profile', { currentPassword, newPassword })
       toast.success('Password updated successfully')
+      setUser(prev => ({ ...prev, isPasswordChanged: true }))
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
