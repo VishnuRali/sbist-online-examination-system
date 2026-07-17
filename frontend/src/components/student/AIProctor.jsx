@@ -4,7 +4,7 @@ import api from '../../utils/api'
 
 // Load MediaPipe Tasks Vision dynamically from CDN
 const loadMediaPipe = async () => {
-  return await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/tasks-vision.js')
+  return await import('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.8/vision_bundle.mjs')
 }
 
 export default function AIProctor({ resultId, onViolation, onPermissionChange, retryTrigger }) {
