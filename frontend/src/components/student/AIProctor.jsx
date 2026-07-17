@@ -342,7 +342,10 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
         if (currentInitId === initIdRef.current) {
           setError(err.message || "Camera permission denied or model loading failed.");
           setLoading(false);
-          onPermissionChange(false);
+          onPermissionChange(false, {
+            name: err.name || 'UnknownError',
+            message: err.message || 'An unknown error occurred during camera initialization.'
+          });
         }
       }
     };

@@ -6,7 +6,8 @@ import AIProctor from '../../components/student/AIProctor'
 import { formatTime } from '../../utils/helpers'
 import {
   Clock, AlertTriangle, ChevronLeft, ChevronRight,
-  Flag, Send, Maximize, Eye, EyeOff, BookOpen, KeyRound
+  Flag, Send, Maximize, Eye, EyeOff, BookOpen, KeyRound,
+  CameraOff, AlertCircle
 } from 'lucide-react'
 
 // ──────────────────────────────────────────────────────────────
@@ -118,6 +119,7 @@ export default function ExamPage() {
   const [accessCodeError, setAccessCodeError] = useState('')
   const [startingWithCode, setStartingWithCode] = useState(false)
   const [webcamPermissionGranted, setWebcamPermissionGranted] = useState(null)
+  const [cameraError, setCameraError] = useState(null)
   const [retryTrigger, setRetryTrigger] = useState(0)
 
   const autoSaveRef = useRef(null)
@@ -445,12 +447,18 @@ export default function ExamPage() {
     return () => clearInterval(autoSaveRef.current)
   }, [resultId, submitted])
 
-  const handlePermissionChange = useCallback((granted) => {
+  const handlePermissionChange = useCallback((granted, errorObj = null) => {
     setWebcamPermissionGranted(granted)
+    if (errorObj) {
+      setCameraError(errorObj)
+    } else if (granted === true) {
+      setCameraError(null)
+    }
   }, [])
 
   const handleRetryCamera = useCallback(() => {
     setWebcamPermissionGranted(null)
+    setCameraError(null)
     setRetryTrigger(prev => prev + 1)
   }, [])
 
@@ -714,6 +722,95 @@ export default function ExamPage() {
     )
   }
 
+  // Map exact camera error details
+  let errorTitle = "Camera Access Required";
+  let errorMessage = "This exam requires webcam access for AI Proctoring.";
+  let errorInstructions = (
+    <>
+      1. Click the site settings icon (lock or sliders) next to the URL address bar.
+      <br />
+      2. Change Camera permission to <strong>Allow</strong>.
+      <br />
+      3. Click the <strong>Retry Camera Access</strong> button below.
+    </>
+  );
+  let ErrorIcon = EyeOff;
+  let errorColorClass = "text-red-500 border-red-500/20 bg-red-500/10";
+  let borderClass = "border-red-500/30";
+
+  if (cameraError) {
+    const name = cameraError.name;
+    const msg = cameraError.message;
+
+    if (name === 'NotAllowedError' || name === 'PermissionDeniedError') {
+      errorTitle = "Camera Access Required";
+      errorMessage = "Webcam access is blocked in your browser settings. AI Proctoring requires camera permission to verify your identity.";
+      ErrorIcon = EyeOff;
+      errorColorClass = "text-red-400 border-red-500/20 bg-red-500/10";
+      borderClass = "border-red-500/30";
+    } else if (name === 'NotFoundError' || name === 'DevicesNotFoundError') {
+      errorTitle = "Webcam Hardware Not Detected";
+      errorMessage = "No webcam device was found connected to this computer. Please connect a working webcam.";
+      errorInstructions = (
+        <>
+          1. Check that your webcam is properly plugged in/connected.
+          <br />
+          2. Ensure your computer recognizes the webcam.
+          <br />
+          3. Click the <strong>Retry Camera Access</strong> button to scan again.
+        </>
+      );
+      ErrorIcon = CameraOff;
+      errorColorClass = "text-rose-400 border-rose-500/20 bg-rose-500/10";
+      borderClass = "border-rose-500/30";
+    } else if (name === 'NotReadableError' || name === 'TrackStartError') {
+      errorTitle = "Webcam Already in Use";
+      errorMessage = "Your webcam is currently being used by another application (e.g. Zoom, Microsoft Teams, Google Meet) or another browser tab.";
+      errorInstructions = (
+        <>
+          1. Close all other browser tabs and apps using your webcam.
+          <br />
+          2. Make sure no other program is capturing your camera.
+          <br />
+          3. Click the <strong>Retry Camera Access</strong> button to take control.
+        </>
+      );
+      ErrorIcon = AlertTriangle;
+      errorColorClass = "text-amber-400 border-amber-500/20 bg-amber-500/10";
+      borderClass = "border-amber-500/30";
+    } else if (name === 'SecurityError') {
+      errorTitle = "Camera Access Blocked (Security)";
+      errorMessage = "Camera access is disabled due to non-secure origin or security protocol policies (e.g., non-HTTPS link).";
+      errorInstructions = (
+        <>
+          1. Ensure the web address starts with <strong>https://</strong>.
+          <br />
+          2. Check your browser security policies regarding media hardware.
+          <br />
+          3. Access the exam via a secure browser window.
+        </>
+      );
+      ErrorIcon = AlertCircle;
+      errorColorClass = "text-red-400 border-red-500/20 bg-red-500/10";
+      borderClass = "border-red-500/30";
+    } else {
+      errorTitle = "Camera Initialization Failed";
+      errorMessage = `An unexpected error occurred while starting your camera: ${msg}`;
+      errorInstructions = (
+        <>
+          1. Disconnect and reconnect your webcam, or restart your browser.
+          <br />
+          2. Make sure you don't have constraints blocking the camera.
+          <br />
+          3. Click the <strong>Retry Camera Access</strong> button to initialize again.
+        </>
+      );
+      ErrorIcon = AlertCircle;
+      errorColorClass = "text-amber-400 border-amber-500/20 bg-amber-500/10";
+      borderClass = "border-amber-500/30";
+    }
+  }
+
   return (
     <div className="h-screen flex flex-col overflow-hidden bg-slate-950 no-select" style={{ userSelect: 'none' }}>
       {examData?.enableAIProctoring && webcamPermissionGranted === null ? (
@@ -726,20 +823,16 @@ export default function ExamPage() {
         </div>
       ) : examData?.enableAIProctoring && webcamPermissionGranted === false ? (
         <div className="min-h-screen flex-1 flex items-center justify-center p-6 bg-slate-950">
-          <div className="glass-card w-full max-w-md p-8 text-center border-red-500/30 slide-up">
-            <div className="w-16 h-16 bg-red-500/10 rounded-2xl flex items-center justify-center mx-auto mb-6 text-red-500 border border-red-500/20">
-              <EyeOff size={32} />
+          <div className={`glass-card w-full max-w-md p-8 text-center slide-up ${borderClass}`}>
+            <div className={`w-16 h-16 rounded-2xl flex items-center justify-center mx-auto mb-6 border ${errorColorClass}`}>
+              <ErrorIcon size={32} />
             </div>
-            <h2 className="text-xl font-bold text-slate-100 font-['Outfit'] mb-3">Camera Access Required</h2>
+            <h2 className="text-xl font-bold text-slate-100 font-['Outfit'] mb-3">{errorTitle}</h2>
             <p className="text-slate-400 text-sm mb-6 leading-relaxed">
-              This exam requires webcam access for AI Proctoring. To continue:
+              {errorMessage}
               <br />
-              <span className="text-xs text-slate-500 block mt-2 text-left bg-slate-900/60 p-3 rounded-lg border border-slate-800">
-                1. Click the site settings icon (lock or sliders) next to the URL address bar.
-                <br />
-                2. Change Camera permission to <strong>Allow</strong>.
-                <br />
-                3. Click the <strong>Retry Camera Access</strong> button below.
+              <span className="text-xs text-slate-500 block mt-4 text-left bg-slate-900/60 p-3 rounded-lg border border-slate-800 font-sans leading-relaxed">
+                {errorInstructions}
               </span>
             </p>
             <div className="flex flex-col gap-3">
