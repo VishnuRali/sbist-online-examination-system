@@ -11,6 +11,7 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
   const [minimized, setMinimized] = useState(false)
+  const [showPrompt, setShowPrompt] = useState(false)
 
   // Floating draggable position in pixels
   const [position, setPosition] = useState({ x: window.innerWidth - 240, y: 70 })
@@ -82,6 +83,7 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
     window.addEventListener('resize', handleResize)
     return () => window.removeEventListener('resize', handleResize)
   }, [minimized])
+
 
   // Background offline queue sync
   const syncQueue = useCallback(async () => {
@@ -431,7 +433,7 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                 }
               }
             } 
-            // Rule C: Head Turn (Continuously looking away for 2.5s)
+            // Rule C: Head Turn (Continuously looking away for 2.0s)
             else {
               noFaceStartTimeRef.current = null
               multipleFacesStartTimeRef.current = null
@@ -440,20 +442,17 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
               const nose = landmarks[4]
               const leftEye = landmarks[33]
               const rightEye = landmarks[263]
-              const forehead = landmarks[10]
-              const chin = landmarks[152]
 
               let lookingAway = false
-              if (nose && leftEye && rightEye && forehead && chin) {
+              if (nose && leftEye && rightEye) {
                 const minX = Math.min(leftEye.x, rightEye.x)
                 const maxX = Math.max(leftEye.x, rightEye.x)
                 const horizontalRatio = (nose.x - minX) / (maxX - minX)
 
-                const minY = Math.min(forehead.y, chin.y)
-                const maxY = Math.max(forehead.y, chin.y)
-                const verticalRatio = (nose.y - minY) / (maxY - minY)
-
-                if (horizontalRatio < 0.35 || horizontalRatio > 0.65 || verticalRatio < 0.48 || verticalRatio > 0.72) {
+                // Only detect explicit LEFT and RIGHT head turns.
+                // Thresholds are widened (0.24 and 0.76) to detect only clear rotations where the face is no longer directed at the screen.
+                // Y-axis changes (looking down at keyboard/mouse or up/down while thinking) are completely ignored.
+                if (horizontalRatio < 0.24 || horizontalRatio > 0.76) {
                   lookingAway = true
                 }
               }
@@ -463,13 +462,23 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
                   headTurnStartTimeRef.current = Date.now()
                 } else {
                   const elapsed = Date.now() - headTurnStartTimeRef.current
-                  if (elapsed > 2500) {
+                  if (elapsed >= 5000) {
                     onViolation("Head Turn")
                     headTurnStartTimeRef.current = Date.now()
+                    setShowPrompt(false)
+                  } else if (elapsed >= 2000) {
+                    setShowPrompt(prev => {
+                      if (!prev) return true
+                      return prev
+                    })
                   }
                 }
               } else {
                 headTurnStartTimeRef.current = null
+                setShowPrompt(prev => {
+                  if (prev) return false
+                  return prev
+                })
               }
             }
           }
@@ -500,11 +509,15 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
       {minimized ? (
         <div
           onMouseDown={handleMouseDown}
-          className="flex items-center gap-2 px-3 py-2 bg-slate-900 border border-slate-700/60 rounded-xl cursor-move text-xs font-semibold text-slate-300 w-40 justify-between animate-fade-in"
+          className={`flex items-center gap-2 px-3 py-2 border rounded-xl cursor-move text-xs font-semibold w-40 justify-between animate-fade-in ${
+            showPrompt 
+              ? 'bg-red-950 border-red-600 text-red-200 shadow-[0_0_10px_rgba(239,68,68,0.2)]' 
+              : 'bg-slate-900 border-slate-700/60 text-slate-300'
+          }`}
         >
           <div className="flex items-center gap-1.5">
-            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
-            <span>AI Proctor</span>
+            <span className={`w-2 h-2 rounded-full animate-pulse ${showPrompt ? 'bg-red-500' : 'bg-emerald-500'}`} />
+            <span>{showPrompt ? 'Look at Screen!' : 'AI Proctor'}</span>
           </div>
           <button
             onClick={() => setMinimized(false)}
@@ -538,6 +551,11 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
               <div className="absolute inset-0 bg-slate-950/80 flex flex-col items-center justify-center text-center p-4 z-10">
                 <div className="spinner !w-6 !h-6 mb-2 mx-auto" />
                 <p className="text-[9px] text-slate-400">Loading AI Proctor...</p>
+              </div>
+            )}
+            {showPrompt && (
+              <div className="absolute top-2 left-2 right-2 bg-red-600/90 text-white text-[9px] py-1 px-2 rounded-md font-bold text-center z-10 border border-red-500/30 animate-pulse shadow-md">
+                Please keep your face towards the screen.
               </div>
             )}
             <video
