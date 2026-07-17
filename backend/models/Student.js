@@ -54,8 +54,18 @@ studentSchema.index({ createdAt: -1 });                                    // pa
 studentSchema.index({ rollNumber: 1 });
 
 studentSchema.pre('save', async function (next) {
-  if (!this.isModified('password')) return next();
-  this.password = await bcrypt.hash(this.password, 12);
+  console.log(`🔐 [Student Pre-Save Hook] Save called on Student ${this.studentId || this._id}`);
+  console.log(`🔐 [Student Pre-Save Hook] isModified('password'): ${this.isModified('password')}`);
+  if (this.isModified('password')) {
+    console.log(`🔐 [Student Pre-Save Hook] Hashing password. Length of input password: ${this.password?.length}`);
+    const originalPassword = this.password;
+    this.password = await bcrypt.hash(this.password, 12);
+    console.log(`🔐 [Student Pre-Save Hook] Password successfully hashed. Hash length: ${this.password?.length}`);
+    
+    // Immediate verification check
+    const match = await bcrypt.compare(originalPassword, this.password);
+    console.log(`🔐 [Student Pre-Save Hook] Post-hash verification check: ${match}`);
+  }
   next();
 });
 

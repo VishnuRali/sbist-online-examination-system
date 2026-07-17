@@ -917,6 +917,17 @@ const updateStudentProfile = async (req, res) => {
     }
 
     await student.save();
+
+    // Verification check immediately after saving
+    if (newPassword) {
+      const isHashOk = await bcrypt.compare(newPassword, student.password);
+      if (!isHashOk) {
+        console.error(`❌ [Security Alert] Password hash verification failed immediately after save for student ${student.studentId}`);
+        return res.status(500).json({ success: false, message: 'Password hashing verification failed. Please try again.' });
+      }
+      console.log(`✅ [StudentProfileUpdate] Password successfully hashed and verified for student ${student.studentId}`);
+    }
+
     res.json({ success: true, message: 'Profile updated successfully', user: student.toJSON() });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

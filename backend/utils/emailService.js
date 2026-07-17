@@ -189,6 +189,12 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
     ? (student.department?.name || 'N/A')
     : (student.department || 'N/A');
 
+  const rawPassword = student.password || '';
+  const isHash = (rawPassword.startsWith('$2a$') || rawPassword.startsWith('$2b$') || rawPassword.startsWith('$2y$')) && rawPassword.length === 60;
+  const displayPassword = isHash
+    ? '<span style="color:#f87171; font-size:12px;">[Securely Encrypted - If you do not know your temporary password, click "Forgot Password" on the login screen to reset]</span>'
+    : rawPassword;
+
   return `
 <!DOCTYPE html>
 <html>
@@ -237,7 +243,7 @@ const getWelcomeEmailHTML = (student, portalUrl) => {
       </div>
       <div class="credential-row">
         <span class="cred-label">Password</span>
-        <span class="cred-value">${student.password}</span>
+        <span class="cred-value">${displayPassword}</span>
       </div>
     </div>
 
