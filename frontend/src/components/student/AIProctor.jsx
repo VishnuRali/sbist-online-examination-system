@@ -494,6 +494,9 @@ export default function AIProctor({ resultId, onViolation, onPermissionChange, r
               const cooldownActive = now - lastWarningTimeRef.current < 5000
               const cooldownRemaining = cooldownActive ? Math.max(0, (5000 - (now - lastWarningTimeRef.current)) / 1000) : 0
               let isCalibDone = baselineYawRef.current !== 0.5 || !isCalibrating
+              let horizontalRatio = 0.5
+              let currentState = 'Looking Center'
+              let lookingAway = false
 
               if (nose && leftEye && rightEye) {
                 const minX = Math.min(leftEye.x, rightEye.x)
